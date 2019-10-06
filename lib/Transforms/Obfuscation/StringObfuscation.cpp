@@ -138,7 +138,10 @@ namespace llvm {
                         random_stream << StringObfDecodeRandomName;
                         random_stream >> random_str;
                         StringObfDecodeRandomName++;
-                        Constant* c = mod->getOrInsertFunction(".datadiv_decode" + random_str, FuncTy);
+
+                        auto funccallee = mod->getOrInsertFunction(".datadiv_decode" + random_str, FuncTy);
+                        llvm::Value* c = funccallee.getCallee();
+
                         Function* fdecode = cast<Function>(c);
                         fdecode->setCallingConv(CallingConv::C);
 
