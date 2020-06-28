@@ -64,9 +64,14 @@ bool Flattening::flatten(Function *f) {
   llvm::cryptoutils->get_bytes(scrambling_key, 16);
   // END OF SCRAMBLER
 
+#if LLVM_VERSION_MAJOR >= 9
+    // >=9.0, LowerSwitchPass depends on LazyValueInfoWrapperPass, which cause AssertError.
+    // So I move LowerSwitchPass into register function, just before FlatteningPass.
+#else
   // Lower switch
   FunctionPass *lower = createLowerSwitchPass();
   lower->runOnFunction(*f);
+#endif
 
   // Save all original BB
   for (Function::iterator i = f->begin(); i != f->end(); ++i) {
