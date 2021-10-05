@@ -55,8 +55,8 @@
 #include "llvm/Transforms/Obfuscation/Flattening.h"
 #include "llvm/Transforms/Obfuscation/Split.h"
 #include "llvm/Transforms/Obfuscation/Substitution.h"
-#include "llvm/Transforms/Obfuscation/StringObfuscation.h"
 #include "llvm/Transforms/Obfuscation/CryptoUtils.h"
+#include "llvm/Transforms/Obfuscation/StringObfuscation.h"
 
 using namespace llvm;
 
@@ -151,7 +151,16 @@ cl::opt<bool>
                   cl::desc("Enable the GVN sinking pass (default = off)"));
 
 // Flags for obfuscation
-static cl::opt<bool> Flattening("fla", cl::init(false),
+static cl::opt<std::string> Seed("seed", cl::init(""),
+                                    cl::desc("seed for the random"));
+
+static cl::opt<std::string> AesSeed("aesSeed", cl::init(""),
+                                    cl::desc("seed for the AES-CTR PRNG"));
+
+static cl::opt<bool> StringObf("sobf", cl::init(false),
+                                  cl::desc("Enable the string obfuscation"));   //tofix
+
+static cl::opt<bool> Flattening("fla", cl::init(false),              //tofix
                                 cl::desc("Enable the flattening pass"));
 
 static cl::opt<bool> BogusControlFlow("bcf", cl::init(false),
@@ -160,17 +169,10 @@ static cl::opt<bool> BogusControlFlow("bcf", cl::init(false),
 static cl::opt<bool> Substitution("sub", cl::init(false),
                                   cl::desc("Enable instruction substitutions"));
 
-static cl::opt<std::string> AesSeed("aesSeed", cl::init(""),
-                                    cl::desc("seed for the AES-CTR PRNG"));
-
 static cl::opt<bool> Split("split", cl::init(false),
                            cl::desc("Enable basic block splitting"));
+// Flags for obfuscation
 
-static cl::opt<std::string> Seed("seed", cl::init(""),
-                           cl::desc("seed for the random"));
-
-static cl::opt<bool> StringObf("sobf", cl::init(false),
-                           cl::desc("Enable the string obfuscation"));
 
 // This option is used in simplifying testing SampleFDO optimizations for
 // profile loading.
@@ -706,13 +708,13 @@ void PassManagerBuilder::populateModulePassManager(
   // Allow forcing function attributes as a debugging and tuning aid.
   MPM.add(createForceFunctionAttrsLegacyPass());
 
-  MPM.add(createSplitBasicBlock(Split));
-  MPM.add(createBogus(BogusControlFlow));
-  #if LLVM_VERSION_MAJOR >= 9
-    MPM.add(createLowerSwitchPass());
-  #endif
-  MPM.add(createFlattening(Flattening));
-  MPM.add(createStringObfuscation(StringObf));
+    //obfuscation related pass
+    MPM.add(createSplitBasicBlockPass(Split));
+    MPM.add(createBogusPass(BogusControlFlow));
+    MPM.add(createFlatteningPass(Flattening));
+    MPM.add(createStringObfuscationPass(StringObf));
+    MPM.add(createSubstitutionPass(Substitution));
+
     
   // If all optimizations are disabled, just run the always-inline pass and,
   // if enabled, the function merging pass.
@@ -741,8 +743,6 @@ void PassManagerBuilder::populateModulePassManager(
       MPM.add(createEliminateAvailableExternallyPass());
       MPM.add(createGlobalDCEPass());
     }
-
-    MPM.add(createSubstitution(Substitution));
       
     addExtensionsToPM(EP_EnabledOnOptLevel0, MPM);
 
@@ -1011,8 +1011,6 @@ void PassManagerBuilder::populateModulePassManager(
   // passes to avoid re-sinking, but before SimplifyCFG because it can allow
   // flattening of blocks.
   MPM.add(createDivRemPairsPass());
-
-  MPM.add(createSubstitution(Substitution));
     
   // LoopSink (and other loop passes since the last simplifyCFG) might have
   // resulted in single-entry-single-exit or empty blocks. Clean up the CFG.

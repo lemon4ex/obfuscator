@@ -37,7 +37,7 @@ namespace llvm {
                     is_flag = flag;
                 }
 
-                virtual bool runOnModule(Module &M) {
+                virtual bool runOnModule(Module &M) override {
                         if(!is_flag)
                             return false;
                         std::vector<GlobalVariable*> toDelConstGlob;
@@ -179,13 +179,13 @@ namespace llvm {
                                 Value *const_key=builder.getInt8(key);
                                 Value *GEP=builder.CreateGEP(gvar,ArrayRef<Value*>(indexList, 2),"arrayIdx");
                                 LoadInst *loadElement=builder.CreateLoad(GEP,false);
-                                loadElement->setAlignment(1);
+                                loadElement->setAlignment(Align(1));
                                 //errs()<<"Type: "<<*loadElement<<"\n";
                                 //CastInst* extended = new ZExtInst(const_key, loadElement->getType(), "extended", for_body);
                                 //Value* extended = builder.CreateZExtOrBitCast(const_key, loadElement->getType(),"extended");
                                 Value *Xor = builder.CreateXor(loadElement,const_key,"xor");
                                 StoreInst *Store = builder.CreateStore(Xor, GEP,false);
-                                Store->setAlignment(1);
+                                Store->setAlignment(Align(1));
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
                                 Value *stepValue = builder.getInt32(1);
@@ -211,6 +211,6 @@ namespace llvm {
 char StringObfuscationPass::ID = 0;
 static RegisterPass<StringObfuscationPass> X("GVDiv", "Global variable (i.e., const char*) diversification pass", false, true);
 
-Pass * llvm::createStringObfuscation(bool flag) {
+Pass * llvm::createStringObfuscationPass(bool flag) {
     return new StringObfuscationPass(flag);
 }

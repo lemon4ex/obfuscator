@@ -142,7 +142,7 @@ struct BogusControlFlow : public FunctionPass {
    * Overwrite FunctionPass method to apply the transformation
    * to the function. See header for more details.
    */
-  virtual bool runOnFunction(Function &F) {
+  virtual bool runOnFunction(Function &F) override {
     // Check if the percentage is correct
     if (ObfTimes <= 0) {
       errs() << "BogusControlFlow application number -bcf_loop=x must be x > 0";
@@ -408,7 +408,7 @@ struct BogusControlFlow : public FunctionPass {
       // randomly insert some instructions
       if (i->isBinaryOp()) { // binary instructions
         unsigned opcode = i->getOpcode();
-        BinaryOperator *op, *op1 = NULL;
+          Instruction *op, *op1 = NULL;
         Twine *var = new Twine("_");
         // treat differently float or int
         // Binary int
@@ -452,7 +452,7 @@ struct BogusControlFlow : public FunctionPass {
             case 0:                                    // do nothing
               break;
             case 1:
-              op = BinaryOperator::CreateFNeg(i->getOperand(0), *var, &*i);
+              op = UnaryOperator::CreateFNeg(i->getOperand(0), *var, &*i);
               op1 = BinaryOperator::Create(Instruction::FAdd, op,
                                            i->getOperand(1), "gen", &*i);
               break;
@@ -623,8 +623,8 @@ struct BogusControlFlow : public FunctionPass {
     for (std::vector<Instruction *>::iterator i = toEdit.begin();
          i != toEdit.end(); ++i) {
       // if y < 10 || x*(x+1) % 2 == 0
-      opX = new LoadInst((Value *)x, "", (*i));
-      opY = new LoadInst((Value *)y, "", (*i));
+      opX = new LoadInst(((Value *)x)->getType()->getPointerElementType(), (Value *)x, "", (*i));
+      opY = new LoadInst(((Value *)y)->getType()->getPointerElementType(), (Value *)y, "", (*i));
 
       op = BinaryOperator::Create(
           Instruction::Sub, (Value *)opX,
@@ -675,9 +675,12 @@ struct BogusControlFlow : public FunctionPass {
 } // namespace
 
 char BogusControlFlow::ID = 0;
-static RegisterPass<BogusControlFlow> X("boguscf",
-                                        "inserting bogus control flow");
+static RegisterPass<BogusControlFlow> X("boguscf", "inserting bogus control flow");
 
-Pass *llvm::createBogus() { return new BogusControlFlow(); }
+Pass *llvm::createBogusPass() {
+  return new BogusControlFlow(true);
+}
 
-Pass *llvm::createBogus(bool flag) { return new BogusControlFlow(flag); }
+Pass *llvm::createBogusPass(bool flag) {
+  return new BogusControlFlow(flag);
+}

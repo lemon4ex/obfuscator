@@ -1,4 +1,4 @@
-add_llvm_library(LLVMObfuscation
+add_llvm_component_library(LLVMObfuscation
   CryptoUtils.cpp
   Substitution.cpp
   StringObfuscation.cpp
@@ -9,6 +9,10 @@ add_llvm_library(LLVMObfuscation
 
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/Transforms/Obfuscation
-)
 
-add_dependencies(LLVMObfuscation intrinsics_gen)
+  DEPENDS
+  intrinsics_gen
+
+  COMPONENT_NAME
+  Obfuscation
+)
