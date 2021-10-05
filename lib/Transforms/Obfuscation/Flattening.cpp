@@ -12,8 +12,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm/Transforms/Obfuscation/Flattening.h"
+#include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Obfuscation/CryptoUtils.h"
-#include "llvm/Transforms/Utils.h"
+#include "llvm/InitializePasses.h"
 
 #define DEBUG_TYPE "flattening"
 
@@ -27,17 +28,21 @@ struct Flattening : public FunctionPass {
   static char ID; // Pass identification, replacement for typeid
   bool flag;
 
-  Flattening() : FunctionPass(ID) {}
-  Flattening(bool flag) : FunctionPass(ID) { this->flag = flag; }
+    Flattening() : FunctionPass(ID) {
+        initializeFlatteningPass(*PassRegistry::getPassRegistry());
+    }
 
-  bool runOnFunction(Function &F);
+    Flattening(bool flag) : FunctionPass(ID) { this->flag = flag; Flattening();}
+
+    void getAnalysisUsage(AnalysisUsage &AU) const override {
+      AU.addRequiredID(LowerSwitchID);
+      FunctionPass::getAnalysisUsage(AU);
+    }
+
+  bool runOnFunction(Function &F) override;
   bool flatten(Function *f);
 };
 } // namespace
-
-char Flattening::ID = 0;
-static RegisterPass<Flattening> X("flattening", "Call graph flattening");
-Pass *llvm::createFlattening(bool flag) { return new Flattening(flag); }
 
 bool Flattening::runOnFunction(Function &F) {
   Function *tmp = &F;
@@ -63,16 +68,6 @@ bool Flattening::flatten(Function *f) {
   char scrambling_key[16];
   llvm::cryptoutils->get_bytes(scrambling_key, 16);
   // END OF SCRAMBLER
-
-#if LLVM_VERSION_MAJOR >= 9
-    // >=9.0, LowerSwitchPass depends on LazyValueInfoWrapperPass, which cause AssertError.
-    // So I move LowerSwitchPass into register function, just before FlatteningPass.
-#else
-  // Lower switch
-  FunctionPass *lower = createLowerSwitchPass();
-  lower->runOnFunction(*f);
-#endif
-
   // Save all original BB
   for (Function::iterator i = f->begin(); i != f->end(); ++i) {
     BasicBlock *tmp = &*i;
@@ -130,7 +125,7 @@ bool Flattening::flatten(Function *f) {
   loopEntry = BasicBlock::Create(f->getContext(), "loopEntry", f, insert);
   loopEnd = BasicBlock::Create(f->getContext(), "loopEnd", f, insert);
 
-  load = new LoadInst(switchVar, "switchVar", loopEntry);
+  load = new LoadInst(switchVar->getType()->getPointerElementType(), switchVar, "switchVar", loopEntry);
 
   // Move first BB on top
   insert->moveBefore(loopEntry);
@@ -245,3 +240,13 @@ bool Flattening::flatten(Function *f) {
 
   return true;
 }
+
+char Flattening::ID = 0;
+INITIALIZE_PASS_BEGIN(Flattening, "flattening", "Call graph flattening", false, false)
+INITIALIZE_PASS_DEPENDENCY(LowerSwitchLegacyPass)
+INITIALIZE_PASS_DEPENDENCY(AssumptionCacheTracker)
+INITIALIZE_PASS_DEPENDENCY(LazyValueInfoWrapperPass)
+INITIALIZE_PASS_END(Flattening, "flattening", "Call graph flattening", false, false)
+//static RegisterPass<Flattening> X("flattening", "Call graph flattening");
+Pass *llvm::createFlatteningPass() { return new Flattening(true); }
+Pass *llvm::createFlatteningPass(bool flag) { return new Flattening(flag); }

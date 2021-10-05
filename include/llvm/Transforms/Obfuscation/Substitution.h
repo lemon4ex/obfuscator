@@ -24,7 +24,8 @@
 #include "llvm/Transforms/Obfuscation/CryptoUtils.h"
 
 namespace llvm {
-Pass *createSubstitution(bool flag);
+    Pass *createSubstitutionPass ();
+    Pass *createSubstitutionPass (bool flag);
 } // namespace llvm
 
 #endif

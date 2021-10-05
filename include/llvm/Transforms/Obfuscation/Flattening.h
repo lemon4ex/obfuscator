@@ -14,19 +14,21 @@
 #ifndef _OBFUSCATION_FLATTENING_H_
 #define _OBFUSCATION_FLATTENING_H_
 
-#include "llvm/ADT/Statistic.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/Module.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/CommandLine.h"
+#include "llvm/IR/Function.h"
+#include "llvm/ADT/Statistic.h"
+#include "llvm/Transforms/Utils/Local.h" // For DemoteRegToStack and DemotePHIToStack
 #include "llvm/Transforms/IPO.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Obfuscation/CryptoUtils.h"
 #include "llvm/Transforms/Obfuscation/Utils.h"
-#include "llvm/Transforms/Scalar.h"
-#include "llvm/Transforms/Utils/Local.h" // For DemoteRegToStack and DemotePHIToStack
+#include "llvm/Transforms/Utils.h"
 
 namespace llvm {
-Pass *createFlattening(bool flag);
+    Pass *createFlatteningPass();
+    Pass *createFlatteningPass(bool flag);
 } // namespace llvm
 
 #endif

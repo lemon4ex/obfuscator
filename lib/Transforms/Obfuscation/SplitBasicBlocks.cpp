@@ -33,20 +33,13 @@ struct SplitBasicBlock : public FunctionPass {
   SplitBasicBlock() : FunctionPass(ID) {}
   SplitBasicBlock(bool flag) : FunctionPass(ID) { this->flag = flag; }
 
-  bool runOnFunction(Function &F);
+  bool runOnFunction(Function &F) override;
   void split(Function *f);
 
   bool containsPHI(BasicBlock *b);
   void shuffle(std::vector<int> &vec);
 };
 } // namespace
-
-char SplitBasicBlock::ID = 0;
-static RegisterPass<SplitBasicBlock> X("splitbbl", "BasicBlock splitting");
-
-Pass *llvm::createSplitBasicBlock(bool flag) {
-  return new SplitBasicBlock(flag);
-}
 
 bool SplitBasicBlock::runOnFunction(Function &F) {
   // Check if the number of applications is correct
@@ -136,4 +129,11 @@ void SplitBasicBlock::shuffle(std::vector<int> &vec) {
   for (int i = n - 1; i > 0; --i) {
     std::swap(vec[i], vec[cryptoutils->get_uint32_t() % (i + 1)]);
   }
+}
+
+char SplitBasicBlock::ID = 0;
+static RegisterPass<SplitBasicBlock> X("splitbbl", "BasicBlock splitting");
+
+Pass *llvm::createSplitBasicBlockPass(bool flag) {
+  return new SplitBasicBlock(flag);
 }

@@ -34,8 +34,8 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 
 namespace llvm {
-Pass *createBogus();
-Pass *createBogus(bool flag);
+    Pass *createBogusPass ();
+    Pass *createBogusPass (bool flag);
 } // namespace llvm
 
 #endif
