@@ -55,7 +55,6 @@
 #include "llvm/Support/Threading.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Support/thread.h"
 #include <mutex>
 
 #if LLVM_ENABLE_THREADS != 0 && defined(__APPLE__)
@@ -1983,8 +1982,7 @@ public:
     return static_cast<const FieldDecl *>(data[0]);
   }
   SourceLocation getLoc() const {
-    return SourceLocation::getFromRawEncoding(
-        (SourceLocation::UIntTy)(uintptr_t)data[1]);
+    return SourceLocation::getFromRawEncoding((unsigned)(uintptr_t)data[1]);
   }
 };
 class EnqueueVisitor : public ConstStmtVisitor<EnqueueVisitor, void> {
@@ -3676,9 +3674,9 @@ clang_parseTranslationUnit_Impl(CXIndex CIdx, const char *source_filename,
       !PrecompilePreamble ? 0 : 2 - CreatePreambleOnFirstParse;
 
   LibclangInvocationReporter InvocationReporter(
-      *CXXIdx, LibclangInvocationReporter::OperationKind::ParseOperation,
-      options, llvm::makeArrayRef(*Args), /*InvocationArgs=*/None,
-      unsaved_files);
+      *CXXIdx, source_filename,
+      LibclangInvocationReporter::OperationKind::ParseOperation, options,
+      llvm::makeArrayRef(*Args), /*InvocationArgs=*/None, unsaved_files);
   std::unique_ptr<ASTUnit> Unit(ASTUnit::LoadFromCommandLine(
       Args->data(), Args->data() + Args->size(),
       CXXIdx->getPCHContainerOperations(), Diags,
@@ -6787,10 +6785,10 @@ void clang_enableStackTraces(void) {
 
 void clang_executeOnThread(void (*fn)(void *), void *user_data,
                            unsigned stack_size) {
-  llvm::thread Thread(stack_size == 0 ? clang::DesiredStackSize
-                                      : llvm::Optional<unsigned>(stack_size),
-                      fn, user_data);
-  Thread.join();
+  llvm::llvm_execute_on_thread(fn, user_data,
+                               stack_size == 0
+                                   ? clang::DesiredStackSize
+                                   : llvm::Optional<unsigned>(stack_size));
 }
 
 //===----------------------------------------------------------------------===//

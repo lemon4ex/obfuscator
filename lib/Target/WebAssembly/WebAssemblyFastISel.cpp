@@ -130,12 +130,9 @@ private:
     case MVT::i64:
     case MVT::f32:
     case MVT::f64:
-      return VT;
     case MVT::funcref:
     case MVT::externref:
-      if (Subtarget->hasReferenceTypes())
-        return VT;
-      break;
+      return VT;
     case MVT::f16:
       return MVT::f32;
     case MVT::v16i8:
@@ -157,7 +154,7 @@ private:
   void addLoadStoreOperands(const Address &Addr, const MachineInstrBuilder &MIB,
                             MachineMemOperand *MMO);
   unsigned maskI1Value(unsigned Reg, const Value *V);
-  unsigned getRegForI1Value(const Value *V, const BasicBlock *BB, bool &Not);
+  unsigned getRegForI1Value(const Value *V, bool &Not);
   unsigned zeroExtendToI32(unsigned Reg, const Value *V,
                            MVT::SimpleValueType From);
   unsigned signExtendToI32(unsigned Reg, const Value *V,
@@ -418,16 +415,19 @@ unsigned WebAssemblyFastISel::maskI1Value(unsigned Reg, const Value *V) {
   return zeroExtendToI32(Reg, V, MVT::i1);
 }
 
-unsigned WebAssemblyFastISel::getRegForI1Value(const Value *V,
-                                               const BasicBlock *BB,
-                                               bool &Not) {
+unsigned WebAssemblyFastISel::getRegForI1Value(const Value *V, bool &Not) {
   if (const auto *ICmp = dyn_cast<ICmpInst>(V))
     if (const ConstantInt *C = dyn_cast<ConstantInt>(ICmp->getOperand(1)))
-      if (ICmp->isEquality() && C->isZero() && C->getType()->isIntegerTy(32) &&
-          ICmp->getParent() == BB) {
+      if (ICmp->isEquality() && C->isZero() && C->getType()->isIntegerTy(32)) {
         Not = ICmp->isTrueWhenEqual();
         return getRegForValue(ICmp->getOperand(0));
       }
+
+  Value *NotV;
+  if (match(V, m_Not(m_Value(NotV))) && V->getType()->isIntegerTy(32)) {
+    Not = true;
+    return getRegForValue(NotV);
+  }
 
   Not = false;
   unsigned Reg = getRegForValue(V);
@@ -909,8 +909,7 @@ bool WebAssemblyFastISel::selectSelect(const Instruction *I) {
   const auto *Select = cast<SelectInst>(I);
 
   bool Not;
-  unsigned CondReg =
-      getRegForI1Value(Select->getCondition(), I->getParent(), Not);
+  unsigned CondReg = getRegForI1Value(Select->getCondition(), Not);
   if (CondReg == 0)
     return false;
 
@@ -1310,7 +1309,7 @@ bool WebAssemblyFastISel::selectBr(const Instruction *I) {
   MachineBasicBlock *FBB = FuncInfo.MBBMap[Br->getSuccessor(1)];
 
   bool Not;
-  unsigned CondReg = getRegForI1Value(Br->getCondition(), Br->getParent(), Not);
+  unsigned CondReg = getRegForI1Value(Br->getCondition(), Not);
   if (CondReg == 0)
     return false;
 

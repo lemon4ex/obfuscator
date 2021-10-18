@@ -44,6 +44,7 @@ NamedDecl *Parser::ParseCXXInlineMethodDef(
                                            VS, ICIS_NoInit);
     if (FnD) {
       Actions.ProcessDeclAttributeList(getCurScope(), FnD, AccessAttrs);
+      Actions.ProcessAPINotes(FnD);
       if (PureSpecLoc.isValid())
         Actions.ActOnPureSpecifier(FnD, PureSpecLoc);
     }
@@ -778,7 +779,6 @@ void Parser::ParseLexedPragma(LateParsedPragma &LP) {
   ConsumeAnyToken(/*ConsumeCodeCompletionTok=*/true);
   assert(Tok.isAnnotation() && "Expected annotation token.");
   switch (Tok.getKind()) {
-  case tok::annot_attr_openmp:
   case tok::annot_pragma_openmp: {
     AccessSpecifier AS = LP.getAccessSpecifier();
     ParsedAttributesWithRange Attrs(AttrFactory);

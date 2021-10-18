@@ -193,11 +193,14 @@ if re.match(r'^arm64(e)?-apple-(macos|darwin)', config.target_triple):
 if platform.system() not in ['Windows']:
     config.available_features.add('can-remove-opened-file')
 
+# *-apple-macosx should also be XFAILED when 'darwin' is XFAILED.
+if lit.util.isMacOSTriple(config.target_triple):
+   config.available_features.add('darwin')
+
 # Features
 known_arches = ["x86_64", "mips64", "ppc64", "aarch64"]
 if (any(config.target_triple.startswith(x) for x in known_arches)):
   config.available_features.add("clang-target-64-bits")
-
 
 
 def calculate_arch_features(arch_string):

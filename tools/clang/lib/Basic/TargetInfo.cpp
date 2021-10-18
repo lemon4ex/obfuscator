@@ -124,6 +124,7 @@ TargetInfo::TargetInfo(const llvm::Triple &T) : TargetOpts(), Triple(T) {
   HasRISCVVTypes = false;
   AllowAMDGPUUnsafeFPAtomics = false;
   ARMCDECoprocMask = 0;
+  PointerAuthSupported = false;
 
   // Default to no types using fpret.
   RealTypeUsesObjCFPRet = 0;
@@ -396,23 +397,6 @@ void TargetInfo::adjust(DiagnosticsEngine &Diags, LangOptions &Opts) {
     HalfFormat = &llvm::APFloat::IEEEhalf();
     FloatFormat = &llvm::APFloat::IEEEsingle();
     LongDoubleFormat = &llvm::APFloat::IEEEquad();
-
-    // OpenCL C v3.0 s6.7.5 - The generic address space requires support for
-    // OpenCL C 2.0 or OpenCL C 3.0 with the __opencl_c_generic_address_space
-    // feature
-    // OpenCL C v3.0 s6.2.1 - OpenCL pipes require support of OpenCL C 2.0
-    // or later and __opencl_c_pipes feature
-    // FIXME: These language options are also defined in setLangDefaults()
-    // for OpenCL C 2.0 but with no access to target capabilities. Target
-    // should be immutable once created and thus these language options need
-    // to be defined only once.
-    if (Opts.OpenCLVersion == 300) {
-      const auto &OpenCLFeaturesMap = getSupportedOpenCLOpts();
-      Opts.OpenCLGenericAddressSpace = hasFeatureEnabled(
-          OpenCLFeaturesMap, "__opencl_c_generic_address_space");
-      Opts.OpenCLPipes =
-          hasFeatureEnabled(OpenCLFeaturesMap, "__opencl_c_pipes");
-    }
   }
 
   if (Opts.DoubleSize) {
@@ -447,11 +431,6 @@ void TargetInfo::adjust(DiagnosticsEngine &Diags, LangOptions &Opts) {
   // its corresponding signed type.
   PaddingOnUnsignedFixedPoint |= Opts.PaddingOnUnsignedFixedPoint;
   CheckFixedPointBits();
-
-  if (Opts.ProtectParens && !checkArithmeticFenceSupported()) {
-    Diags.Report(diag::err_opt_not_valid_on_target) << "-fprotect-parens";
-    Opts.ProtectParens = false;
-  }
 }
 
 bool TargetInfo::initFeatureMap(
@@ -807,6 +786,10 @@ bool TargetInfo::validateInputConstraint(
   }
 
   return true;
+}
+
+bool TargetInfo::validatePointerAuthKey(const llvm::APSInt &value) const {
+  return false;
 }
 
 void TargetInfo::CheckFixedPointBits() const {

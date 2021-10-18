@@ -314,19 +314,14 @@ static void addHWAddressSanitizerPasses(const PassManagerBuilder &Builder,
       static_cast<const PassManagerBuilderWrapper &>(Builder);
   const CodeGenOptions &CGOpts = BuilderWrapper.getCGOpts();
   bool Recover = CGOpts.SanitizeRecover.has(SanitizerKind::HWAddress);
-  PM.add(createHWAddressSanitizerLegacyPassPass(
-      /*CompileKernel*/ false, Recover,
-      /*DisableOptimization*/ CGOpts.OptimizationLevel == 0));
+  PM.add(
+      createHWAddressSanitizerLegacyPassPass(/*CompileKernel*/ false, Recover));
 }
 
 static void addKernelHWAddressSanitizerPasses(const PassManagerBuilder &Builder,
-                                              legacy::PassManagerBase &PM) {
-  const PassManagerBuilderWrapper &BuilderWrapper =
-      static_cast<const PassManagerBuilderWrapper &>(Builder);
-  const CodeGenOptions &CGOpts = BuilderWrapper.getCGOpts();
+                                            legacy::PassManagerBase &PM) {
   PM.add(createHWAddressSanitizerLegacyPassPass(
-      /*CompileKernel*/ true, /*Recover*/ true,
-      /*DisableOptimization*/ CGOpts.OptimizationLevel == 0));
+      /*CompileKernel*/ true, /*Recover*/ true));
 }
 
 static void addGeneralOptsForMemorySanitizer(const PassManagerBuilder &Builder,
@@ -374,6 +369,11 @@ static void addDataFlowSanitizerPass(const PassManagerBuilder &Builder,
       static_cast<const PassManagerBuilderWrapper&>(Builder);
   const LangOptions &LangOpts = BuilderWrapper.getLangOpts();
   PM.add(createDataFlowSanitizerLegacyPassPass(LangOpts.NoSanitizeFiles));
+}
+
+static void addSoftPointerAuthPass(const PassManagerBuilder &Builder,
+                                   legacy::PassManagerBase &PM) {
+  PM.add(createSoftPointerAuthPass());
 }
 
 static void addEntryExitInstrumentationPass(const PassManagerBuilder &Builder,
@@ -694,6 +694,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   // enabled when loop unrolling is enabled.
   PMBuilder.LoopsInterleaved = CodeGenOpts.UnrollLoops;
   PMBuilder.MergeFunctions = CodeGenOpts.MergeFunctions;
+  PMBuilder.SplitColdCode = CodeGenOpts.SplitColdCode;
   PMBuilder.PrepareForThinLTO = CodeGenOpts.PrepareForThinLTO;
   PMBuilder.PrepareForLTO = CodeGenOpts.PrepareForLTO;
   PMBuilder.RerollLoops = CodeGenOpts.RerollLoops;
@@ -796,6 +797,13 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
                            addDataFlowSanitizerPass);
     PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
                            addDataFlowSanitizerPass);
+  }
+
+  if (LangOpts.SoftPointerAuth) {
+    PMBuilder.addExtension(PassManagerBuilder::EP_OptimizerLast,
+                           addSoftPointerAuthPass);
+    PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
+                           addSoftPointerAuthPass);
   }
 
   if (CodeGenOpts.InstrumentFunctions ||
@@ -1169,9 +1177,7 @@ static void addSanitizers(const Triple &TargetTriple,
     auto HWASanPass = [&](SanitizerMask Mask, bool CompileKernel) {
       if (LangOpts.Sanitize.has(Mask)) {
         bool Recover = CodeGenOpts.SanitizeRecover.has(Mask);
-        MPM.addPass(HWAddressSanitizerPass(
-            CompileKernel, Recover,
-            /*DisableOptimization=*/CodeGenOpts.OptimizationLevel == 0));
+        MPM.addPass(HWAddressSanitizerPass(CompileKernel, Recover));
       }
     };
     HWASanPass(SanitizerKind::HWAddress, false);
@@ -1272,6 +1278,7 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
   // Only enable CGProfilePass when using integrated assembler, since
   // non-integrated assemblers don't recognize .cgprofile section.
   PTO.CallGraphProfile = !CodeGenOpts.DisableIntegratedAS;
+  PTO.Coroutines = LangOpts.Coroutines;
 
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
@@ -1329,6 +1336,9 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
 
     bool IsThinLTO = CodeGenOpts.PrepareForThinLTO;
     bool IsLTO = CodeGenOpts.PrepareForLTO;
+
+    // -f[no-]split-cold-code
+    PB.setEnableHotColdSplitting(CodeGenOpts.SplitColdCode);
 
     if (LangOpts.ObjCAutoRefCount) {
       PB.registerPipelineStartEPCallback(

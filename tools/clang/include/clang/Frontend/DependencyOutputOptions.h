@@ -39,6 +39,7 @@ public:
                                      /// problems.
   unsigned AddMissingHeaderDeps : 1; ///< Add missing headers to dependency list
   unsigned IncludeModuleFiles : 1; ///< Include module file dependencies.
+  unsigned SkipUnusedModuleMaps : 1; ///< Skip unused module map dependencies.
   unsigned ShowSkippedHeaderIncludes : 1; ///< With ShowHeaderIncludes, show
                                           /// also includes that were skipped
                                           /// due to the "include guard
@@ -79,7 +80,7 @@ public:
 public:
   DependencyOutputOptions()
       : IncludeSystemHeaders(0), ShowHeaderIncludes(0), UsePhonyTargets(0),
-        AddMissingHeaderDeps(0), IncludeModuleFiles(0),
+        AddMissingHeaderDeps(0), IncludeModuleFiles(0), SkipUnusedModuleMaps(0),
         ShowSkippedHeaderIncludes(0) {}
 };
 

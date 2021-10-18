@@ -83,8 +83,8 @@ public:
     llvm::FileRemover ErrorRemover(ErrorFile.c_str());
     llvm::Optional<StringRef> Redirects[] = {
         {""}, // Stdin
-        OutputFile.str(),
-        ErrorFile.str(),
+        StringRef(OutputFile),
+        StringRef(ErrorFile),
     };
     if (const int RC = llvm::sys::ExecuteAndWait(
             ClangBinaryPath, PrintResourceDirArgs, {}, Redirects)) {

@@ -4,5 +4,7 @@ executable("llvm-sim") {
     "//llvm/lib/IRReader",
     "//llvm/lib/Support",
   ]
-  sources = [ "llvm-sim.cpp" ]
+  sources = [
+    "llvm-sim.cpp",
+  ]
 }

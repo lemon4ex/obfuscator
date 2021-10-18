@@ -13,7 +13,6 @@
 ///
 //===----------------------------------------------------------------------===//
 
-#include "AsmParser/WebAssemblyAsmTypeCheck.h"
 #include "MCTargetDesc/WebAssemblyMCTargetDesc.h"
 #include "MCTargetDesc/WebAssemblyTargetStreamer.h"
 #include "TargetInfo/WebAssemblyTargetInfo.h"
@@ -32,7 +31,6 @@
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/MC/MCSymbolWasm.h"
 #include "llvm/Support/Endian.h"
-#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/TargetRegistry.h"
 
 using namespace llvm;
@@ -227,36 +225,17 @@ class WebAssemblyAsmParser final : public MCTargetAsmParser {
     Else,
     Undefined,
   };
-  struct Nested {
-    NestingType NT;
-    wasm::WasmSignature Sig;
-  };
-  std::vector<Nested> NestingStack;
+  std::vector<NestingType> NestingStack;
 
   MCSymbolWasm *DefaultFunctionTable = nullptr;
   MCSymbol *LastFunctionLabel = nullptr;
-
-  bool is64;
-
-  WebAssemblyAsmTypeCheck TC;
-  // Don't type check if -no-type-check was set.
-  bool SkipTypeCheck;
 
 public:
   WebAssemblyAsmParser(const MCSubtargetInfo &STI, MCAsmParser &Parser,
                        const MCInstrInfo &MII, const MCTargetOptions &Options)
       : MCTargetAsmParser(Options, STI, MII), Parser(Parser),
-        Lexer(Parser.getLexer()),
-        is64(STI.getTargetTriple().isArch64Bit()),
-        TC(Parser, MII, is64), SkipTypeCheck(Options.MCNoTypeCheck) {
+        Lexer(Parser.getLexer()) {
     setAvailableFeatures(ComputeAvailableFeatures(STI.getFeatureBits()));
-    // Don't type check if this is inline asm, since that is a naked sequence of
-    // instructions without a function/locals decl.
-    auto &SM = Parser.getSourceManager();
-    auto BufferName =
-      SM.getBufferInfo(SM.getMainFileID()).Buffer->getBufferIdentifier();
-    if (BufferName == "<inline asm>")
-      SkipTypeCheck = true;
   }
 
   void Initialize(MCAsmParser &Parser) override {
@@ -321,16 +300,15 @@ public:
     }
   }
 
-  void push(NestingType NT) { NestingStack.push_back({NT, wasm::WasmSignature()}); }
+  void push(NestingType NT) { NestingStack.push_back(NT); }
 
   bool pop(StringRef Ins, NestingType NT1, NestingType NT2 = Undefined) {
     if (NestingStack.empty())
       return error(Twine("End of block construct with no start: ") + Ins);
     auto Top = NestingStack.back();
-    if (Top.NT != NT1 && Top.NT != NT2)
+    if (Top != NT1 && Top != NT2)
       return error(Twine("Block construct type mismatch, expected: ") +
-                   nestingString(Top.NT).second + ", instead got: " + Ins);
-    TC.setLastSig(Top.Sig);
+                   nestingString(Top).second + ", instead got: " + Ins);
     NestingStack.pop_back();
     return false;
   }
@@ -339,7 +317,7 @@ public:
     auto Err = !NestingStack.empty();
     while (!NestingStack.empty()) {
       error(Twine("Unmatched block construct(s) at function end: ") +
-            nestingString(NestingStack.back().NT).first);
+            nestingString(NestingStack.back()).first);
       NestingStack.pop_back();
     }
     return Err;
@@ -468,11 +446,6 @@ public:
 
   void addBlockTypeOperand(OperandVector &Operands, SMLoc NameLoc,
                            WebAssembly::BlockType BT) {
-    if (BT != WebAssembly::BlockType::Void) {
-      wasm::WasmSignature Sig({static_cast<wasm::ValType>(BT)}, {});
-      TC.setLastSig(Sig);
-      NestingStack.back().Sig = Sig;
-    }
     Operands.push_back(std::make_unique<WebAssemblyOperand>(
         WebAssemblyOperand::Integer, NameLoc, NameLoc,
         WebAssemblyOperand::IntOp{static_cast<int64_t>(BT)}));
@@ -639,9 +612,6 @@ public:
         return true;
       // Got signature as block type, don't need more
       ExpectBlockType = false;
-      TC.setLastSig(*Signature.get());
-      if (ExpectBlockType)
-        NestingStack.back().Sig = *Signature.get();
       auto &Ctx = getContext();
       // The "true" here will cause this to be a nameless symbol.
       MCSymbol *Sym = Ctx.createTempSymbol("typeindex", true);
@@ -885,7 +855,6 @@ public:
       auto Signature = std::make_unique<wasm::WasmSignature>();
       if (parseSignature(Signature.get()))
         return true;
-      TC.funcDecl(*Signature);
       WasmSym->setSignature(Signature.get());
       addSignature(std::move(Signature));
       WasmSym->setType(wasm::WASM_SYMBOL_TYPE_FUNCTION);
@@ -953,7 +922,6 @@ public:
       SmallVector<wasm::ValType, 4> Locals;
       if (parseRegTypeList(Locals))
         return true;
-      TC.localDecl(Locals);
       TOut.emitLocal(Locals);
       CurrentState = FunctionLocals;
       return expect(AsmToken::EndOfStatement, "EOL");
@@ -1018,7 +986,7 @@ public:
         if (Op0.getImm() == -1)
           Op0.setImm(Align);
       }
-      if (is64) {
+      if (getSTI().getTargetTriple().isArch64Bit()) {
         // Upgrade 32-bit loads/stores to 64-bit. These mostly differ by having
         // an offset64 arg instead of offset32, but to the assembler matcher
         // they're both immediates so don't get selected for.
@@ -1028,11 +996,9 @@ public:
           Inst.setOpcode(Opc64);
         }
       }
-      if (!SkipTypeCheck && TC.typeCheck(IDLoc, Inst))
-        return true;
       Out.emitInstruction(Inst, getSTI());
       if (CurrentState == EndFunction) {
-        onEndOfFunction(IDLoc);
+        onEndOfFunction();
       } else {
         CurrentState = Instructions;
       }
@@ -1112,9 +1078,7 @@ public:
       getContext().addGenDwarfSection(WS);
   }
 
-  void onEndOfFunction(SMLoc ErrorLoc) {
-    TC.endOfFunction(ErrorLoc);
-
+  void onEndOfFunction() {
     // Automatically output a .size directive, so it becomes optional for the
     // user.
     if (!LastFunctionLabel) return;
@@ -1141,14 +1105,3 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeWebAssemblyAsmParser() {
 #define GET_SUBTARGET_FEATURE_NAME
 #define GET_MATCHER_IMPLEMENTATION
 #include "WebAssemblyGenAsmMatcher.inc"
-
-StringRef GetMnemonic(unsigned Opc) {
-  // FIXME: linear search!
-  for (auto &ME : MatchTable0) {
-    if (ME.Opcode == Opc) {
-      return ME.getMnemonic();
-    }
-  }
-  assert(false && "mnemonic not found");
-  return StringRef();
-}

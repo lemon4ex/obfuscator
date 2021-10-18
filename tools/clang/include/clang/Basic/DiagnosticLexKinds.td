@@ -300,13 +300,6 @@ def pp_pragma_once_in_main_file : Warning<"#pragma once in main file">,
 def pp_pragma_sysheader_in_main_file : Warning<
   "#pragma system_header ignored in main file">,
   InGroup<DiagGroup<"pragma-system-header-outside-header">>;
-
-def err_pragma_include_instead_not_sysheader : Error<
-  "'#pragma clang include_instead' cannot be used outside of system headers">;
-def err_pragma_include_instead_system_reserved : Error<
-  "header '%0' is an implementation detail; #include %select{'%2'|either '%2' "
-  "or '%3'|one of %2}1 instead">;
-
 def pp_poisoning_existing_macro : Warning<"poisoning existing macro">;
 def pp_out_of_date_dependency : Warning<
   "current file is older than dependency %0">;
@@ -770,7 +763,7 @@ def warn_quoted_include_in_framework_header : Warning<
   >, InGroup<FrameworkHdrQuotedInclude>, DefaultIgnore;
 def warn_framework_include_private_from_public : Warning<
   "public framework header includes private framework header '%0'"
-  >, InGroup<FrameworkIncludePrivateFromPublic>;
+  >, InGroup<FrameworkIncludePrivateFromPublic>, DefaultIgnore;
 
 def warn_auto_module_import : Warning<
   "treating #%select{include|import|include_next|__include_macros}0 as an "

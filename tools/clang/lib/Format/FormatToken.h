@@ -600,6 +600,7 @@ public:
     case tok::kw__Atomic:
     case tok::kw___attribute:
     case tok::kw___underlying_type:
+    case tok::kw___ptrauth:
     case tok::kw_requires:
       return true;
     default:

@@ -118,6 +118,11 @@ void LLVMPassBuilderOptionsSetForgetAllSCEVInLoopUnroll(
   unwrap(Options)->PTO.ForgetAllSCEVInLoopUnroll = ForgetAllSCEVInLoopUnroll;
 }
 
+void LLVMPassBuilderOptionsSetCoroutines(LLVMPassBuilderOptionsRef Options,
+                                         LLVMBool Coroutines) {
+  unwrap(Options)->PTO.Coroutines = Coroutines;
+}
+
 void LLVMPassBuilderOptionsSetLicmMssaOptCap(LLVMPassBuilderOptionsRef Options,
                                              unsigned LicmMssaOptCap) {
   unwrap(Options)->PTO.LicmMssaOptCap = LicmMssaOptCap;

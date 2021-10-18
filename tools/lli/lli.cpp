@@ -22,20 +22,21 @@
 #include "llvm/Config/llvm-config.h"
 #include "llvm/ExecutionEngine/GenericValue.h"
 #include "llvm/ExecutionEngine/Interpreter.h"
-#include "llvm/ExecutionEngine/JITEventListener.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
+#include "llvm/ExecutionEngine/JITEventListener.h"
 #include "llvm/ExecutionEngine/MCJIT.h"
 #include "llvm/ExecutionEngine/ObjectCache.h"
 #include "llvm/ExecutionEngine/Orc/DebugObjectManagerPlugin.h"
 #include "llvm/ExecutionEngine/Orc/DebugUtils.h"
-#include "llvm/ExecutionEngine/Orc/EPCDebugObjectRegistrar.h"
-#include "llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/MachOPlatform.h"
 #include "llvm/ExecutionEngine/Orc/OrcRemoteTargetClient.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
 #include "llvm/ExecutionEngine/Orc/SymbolStringPool.h"
+#include "llvm/ExecutionEngine/Orc/TPCDebugObjectRegistrar.h"
+#include "llvm/ExecutionEngine/Orc/TPCEHFrameRegistrar.h"
 #include "llvm/ExecutionEngine/Orc/TargetProcess/JITLoaderGDB.h"
 #include "llvm/ExecutionEngine/Orc/TargetProcess/RegisterEHFrames.h"
 #include "llvm/ExecutionEngine/Orc/TargetProcess/TargetExecutionUtils.h"
@@ -227,7 +228,7 @@ namespace {
       cl::desc("Do not resolve lli process symbols in JIT'd code"),
       cl::init(false));
 
-  enum class LLJITPlatform { Inactive, DetectHost, GenericIR };
+  enum class LLJITPlatform { Inactive, DetectHost, GenericIR, MachO };
 
   cl::opt<LLJITPlatform>
       Platform("lljit-platform", cl::desc("Platform to use with LLJIT"),
@@ -236,6 +237,8 @@ namespace {
                                      "Select based on JIT target triple"),
                           clEnumValN(LLJITPlatform::GenericIR, "GenericIR",
                                      "Use LLJITGenericIRPlatform"),
+                          clEnumValN(LLJITPlatform::MachO, "MachO",
+                                     "Use LLJITMachOPlatform"),
                           clEnumValN(LLJITPlatform::Inactive, "Inactive",
                                      "Disable platform support explicitly")),
                cl::Hidden);
@@ -717,8 +720,7 @@ int main(int argc, char **argv, char * const *envp) {
     }
 
     // Create a remote target client running over the channel.
-    llvm::orc::ExecutionSession ES(
-        std::make_unique<orc::UnsupportedExecutorProcessControl>());
+    llvm::orc::ExecutionSession ES;
     ES.setErrorReporter([&](Error Err) { ExitOnErr(std::move(Err)); });
     typedef orc::remote::OrcRemoteTargetClient MyRemote;
     auto R = ExitOnErr(MyRemote::Create(*C, ES));
@@ -875,8 +877,7 @@ int runOrcJIT(const char *ProgName) {
   // JIT builder to instantiate a default (which would fail with an error for
   // unsupported architectures).
   if (UseJITKind != JITKind::OrcLazy) {
-    auto ES = std::make_unique<orc::ExecutionSession>(
-        ExitOnErr(orc::SelfExecutorProcessControl::Create()));
+    auto ES = std::make_unique<orc::ExecutionSession>();
     Builder.setLazyCallthroughManager(
         std::make_unique<orc::LazyCallThroughManager>(*ES, 0, nullptr));
     Builder.setExecutionSession(std::move(ES));
@@ -912,12 +913,20 @@ int runOrcJIT(const char *ProgName) {
   // Set up LLJIT platform.
   {
     LLJITPlatform P = Platform;
-    if (P == LLJITPlatform::DetectHost)
-      P = LLJITPlatform::GenericIR;
+    if (P == LLJITPlatform::DetectHost) {
+      if (TT->isOSBinFormatMachO())
+        P = LLJITPlatform::MachO;
+      else
+        P = LLJITPlatform::GenericIR;
+    }
 
     switch (P) {
     case LLJITPlatform::GenericIR:
       // Nothing to do: LLJITBuilder will use this by default.
+      break;
+    case LLJITPlatform::MachO:
+      Builder.setPlatformSetUp(orc::setUpMachOPlatform);
+      ExitOnErr(orc::enableObjCRegistration("libobjc.dylib"));
       break;
     case LLJITPlatform::Inactive:
       Builder.setPlatformSetUp(orc::setUpInactivePlatform);
@@ -927,18 +936,18 @@ int runOrcJIT(const char *ProgName) {
     }
   }
 
-  std::unique_ptr<orc::ExecutorProcessControl> EPC = nullptr;
+  std::unique_ptr<orc::TargetProcessControl> TPC = nullptr;
   if (JITLinker == JITLinkerKind::JITLink) {
-    EPC = ExitOnErr(orc::SelfExecutorProcessControl::Create(
+    TPC = ExitOnErr(orc::SelfTargetProcessControl::Create(
         std::make_shared<orc::SymbolStringPool>()));
 
-    Builder.setObjectLinkingLayerCreator([&EPC](orc::ExecutionSession &ES,
+    Builder.setObjectLinkingLayerCreator([&TPC](orc::ExecutionSession &ES,
                                                 const Triple &) {
-      auto L = std::make_unique<orc::ObjectLinkingLayer>(ES, EPC->getMemMgr());
+      auto L = std::make_unique<orc::ObjectLinkingLayer>(ES, TPC->getMemMgr());
       L->addPlugin(std::make_unique<orc::EHFrameRegistrationPlugin>(
-          ES, ExitOnErr(orc::EPCEHFrameRegistrar::Create(ES))));
+          ES, ExitOnErr(orc::TPCEHFrameRegistrar::Create(*TPC))));
       L->addPlugin(std::make_unique<orc::DebugObjectManagerPlugin>(
-          ES, ExitOnErr(orc::createJITLoaderGDBRegistrar(ES))));
+          ES, ExitOnErr(orc::createJITLoaderGDBRegistrar(*TPC))));
       return L;
     });
   }
@@ -1060,9 +1069,9 @@ int runOrcJIT(const char *ProgName) {
   JITEvaluatedSymbol MainSym = ExitOnErr(J->lookup(EntryFunc));
   int Result;
 
-  if (EPC) {
-    // ExecutorProcessControl-based execution with JITLink.
-    Result = ExitOnErr(EPC->runAsMain(MainSym.getAddress(), InputArgv));
+  if (TPC) {
+    // TargetProcessControl-based execution with JITLink.
+    Result = ExitOnErr(TPC->runAsMain(MainSym.getAddress(), InputArgv));
   } else {
     // Manual in-process execution with RuntimeDyld.
     using MainFnTy = int(int, char *[]);

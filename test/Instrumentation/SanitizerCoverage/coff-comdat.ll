@@ -20,8 +20,8 @@
 
 ; Both new comdats should no duplicates on COFF.
 
-; CHECK: $foo = comdat nodeduplicate
-; CHECK: $bar = comdat nodeduplicate
+; CHECK: $foo = comdat noduplicates
+; CHECK: $bar = comdat noduplicates
 
 ; Tables for 'foo' should be in the 'foo' comdat.
 

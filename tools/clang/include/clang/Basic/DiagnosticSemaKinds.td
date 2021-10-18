@@ -82,11 +82,11 @@ def err_typecheck_converted_constant_expression_indirect : Error<
   "bind reference to a temporary">;
 def err_expr_not_cce : Error<
   "%select{case value|enumerator value|non-type template argument|"
-  "array size|explicit specifier argument}0 "
+  "array size|constexpr if condition|explicit specifier argument}0 "
   "is not a constant expression">;
 def ext_cce_narrowing : ExtWarn<
   "%select{case value|enumerator value|non-type template argument|"
-  "array size|explicit specifier argument}0 "
+  "array size|constexpr if condition|explicit specifier argument}0 "
   "%select{cannot be narrowed from type %2 to %3|"
   "evaluates to %2, which cannot be narrowed to type %3}1">,
   InGroup<CXX11Narrowing>, DefaultError, SFINAEFailure;
@@ -815,12 +815,65 @@ def warn_fortify_source_overflow
 def warn_fortify_source_size_mismatch : Warning<
   "'%0' size argument is too large; destination buffer has size %1,"
   " but size argument is %2">, InGroup<FortifySource>;
-
 def warn_fortify_source_format_overflow : Warning<
   "'%0' will always overflow; destination buffer has size %1,"
   " but format string expands to at least %2">,
   InGroup<FortifySource>;
 
+def err_ptrauth_disabled_target :
+  Error<"this target does not support pointer authentication">;
+def err_ptrauth_disabled :
+  Error<"pointer authentication is disabled for the current target">;
+def err_ptrauth_invalid_key :
+  Error<"%0 does not identify a valid pointer authentication key for "
+        "the current target">;
+def err_ptrauth_value_bad_type :
+  Error<"%select{signed value|extra discriminator|blended pointer|blended "
+        "integer}0 must have %select{pointer|integer|pointer or integer}1 "
+        "type; type here is %2">;
+def err_ptrauth_bad_constant_pointer :
+  Error<"argument to ptrauth_sign_constant must refer to a global variable "
+        "or function">;
+def err_ptrauth_bad_constant_discriminator :
+  Error<"discriminator argument to ptrauth_sign_constant must be a constant "
+        "integer, the address of the global variable where the result "
+        "will be stored, or a blend of the two">;
+def warn_ptrauth_sign_null_pointer :
+  Warning<"signing a null pointer will yield a non-null pointer">,
+  InGroup<PtrAuthNullPointers>;
+def warn_ptrauth_auth_null_pointer :
+  Warning<"authenticating a null pointer will almost certainly trap">,
+  InGroup<PtrAuthNullPointers>;
+def err_ptrauth_string_not_literal : Error<
+  "argument must be a string literal%select{| of char type}0">;
+def err_ptrauth_type_disc_variably_modified : Error<
+   "cannot pass variably-modified type %0 to "
+   "'__builtin_ptrauth_type_discriminator'">;
+def note_ptrauth_virtual_function_pointer_incomplete_arg_ret :
+  Note<"cannot take an address of a virtual member function if its return or "
+       "argument types are incomplete">;
+def note_ptrauth_virtual_function_incomplete_arg_ret_type :
+  Note<"%0 is incomplete">;
+
+// __ptrauth qualifier
+def err_ptrauth_qualifier_return : Error<
+  "return types may not be qualified with __ptrauth; type is %0">;
+def err_ptrauth_qualifier_param : Error<
+  "parameter types may not be qualified with __ptrauth; type is %0">;
+def err_ptrauth_qualifier_cast : Error<
+  "cast types may not be qualified with __ptrauth; type is %0">;
+def err_ptrauth_qualifier_nonpointer : Error<
+  "__ptrauth qualifier may only be applied to pointer types; type here is %0">;
+def err_ptrauth_qualifier_redundant : Error<
+  "type %0 is already __ptrauth-qualified">;
+def err_ptrauth_qualifier_bad_arg_count : Error<
+  "__ptrauth qualifier must take between 1 and 3 arguments">;
+def err_ptrauth_qualifier_arg_not_ice : Error<
+  "argument to __ptrauth must be an integer constant expression">;
+def err_ptrauth_qualifier_address_discrimination_invalid : Error<
+  "address discrimination flag for __ptrauth must be 0 or 1; value is %0">;
+def err_ptrauth_qualifier_extra_discriminator_invalid : Error<
+  "extra discriminator for __ptrauth must be between 0 and %1; value is %0">;
 
 /// main()
 // static main() is not an error in C, just in C++.
@@ -1024,8 +1077,8 @@ def err_protocol_has_circular_dependency : Error<
   "protocol has circular dependency">;
 def err_undeclared_protocol : Error<"cannot find protocol declaration for %0">;
 def warn_undef_protocolref : Warning<"cannot find protocol definition for %0">;
-def err_atprotocol_protocol : Error<
-  "@protocol is using a forward protocol declaration of %0">;
+def warn_atprotocol_protocol : Warning<
+  "@protocol is using a forward protocol declaration of %0">, InGroup<AtProtocol>;
 def warn_readonly_property : Warning<
   "attribute 'readonly' of property %0 restricts attribute "
   "'readwrite' of property inherited from %1">,
@@ -1452,6 +1505,12 @@ def warn_unimplemented_selector:  Warning<
   InGroup<Selector>, DefaultIgnore;
 def warn_unimplemented_protocol_method : Warning<
   "method %0 in protocol %1 not implemented">, InGroup<Protocol>;
+def warn_class_does_not_conform_protocol : Warning<
+  "%select{class|category}0 %1 does not conform to protocol"
+  "%plural{1: %3|2:s %3 and %4|3:s %3, %4 and %5|:s %3, %4, %5, ...}2">,
+  InGroup<Protocol>;
+def note_add_missing_protocol_stubs : Note<
+  "add stubs for missing protocol requirements">;
 def warn_multiple_selectors: Warning<
   "several methods with selector %0 of mismatched types are found "
   "for the @selector expression">,
@@ -1487,8 +1546,6 @@ def err_messaging_class_with_direct_method : Error<
 // C++ declarations
 def err_static_assert_expression_is_not_constant : Error<
   "static_assert expression is not an integral constant expression">;
-def err_constexpr_if_condition_expression_is_not_constant : Error<
-  "constexpr if condition is not a constant expression">;
 def err_static_assert_failed : Error<"static_assert failed%select{ %1|}0">;
 def err_static_assert_requirement_failed : Error<
   "static_assert failed due to requirement '%0'%select{ %2|}1">;
@@ -3254,10 +3311,6 @@ def warn_assume_aligned_too_great
     : Warning<"requested alignment must be %0 bytes or smaller; maximum "
               "alignment assumed">,
       InGroup<DiagGroup<"builtin-assume-aligned-alignment">>;
-def warn_not_xl_compatible
-    : Warning<"requesting an alignment of 16 bytes or greater for struct"
-              " members is not binary compatible with AIX XL 16.1 and older">,
-      InGroup<AIXCompat>;
 def warn_redeclaration_without_attribute_prev_attribute_ignored : Warning<
   "%q0 redeclared without %1 attribute: previous %1 ignored">,
   InGroup<MicrosoftInconsistentDllImport>;
@@ -3500,7 +3553,8 @@ def note_cannot_use_trivial_abi_reason : Note<
   "its copy constructors and move constructors are all deleted|"
   "it is polymorphic|"
   "it has a base of a non-trivial class type|it has a virtual base|"
-  "it has a __weak field|it has a field of a non-trivial class type}1">;
+  "it has a __weak field|it has a field of a non-trivial class type|"
+  "it has an address-discriminated __ptrauth field}1">;
 
 // Availability attribute
 def warn_availability_unknown_platform : Warning<
@@ -3548,10 +3602,6 @@ def warn_at_available_unchecked_use : Warning<
   "%select{@available|__builtin_available}0 does not guard availability here; "
   "use if (%select{@available|__builtin_available}0) instead">,
   InGroup<DiagGroup<"unsupported-availability-guard">>;
-
-def warn_missing_sdksettings_for_availability_checking : Warning<
-  "%0 availability is ignored without a valid 'SDKSettings.json' in the SDK">,
-  InGroup<DiagGroup<"ignored-availability-without-sdk-settings">>;
 
 // Thread Safety Attributes
 def warn_thread_attribute_ignored : Warning<
@@ -3991,6 +4041,9 @@ def warn_attribute_nonnull_no_pointers : Warning<
 def warn_attribute_nonnull_parm_no_args : Warning<
   "'nonnull' attribute when used on parameters takes no arguments">,
   InGroup<IgnoredAttributes>;
+def warn_attribute_noescape_non_pointer : Warning<
+  "'noescape' attribute ignored on parameter of non-pointer type %0">,
+  InGroup<IgnoredAttributes>;
 def note_declared_nonnull : Note<
   "declared %select{'returns_nonnull'|'nonnull'}0 here">;
 def warn_attribute_sentinel_named_arguments : Warning<
@@ -4219,11 +4272,14 @@ def warn_attr_swift_name_decl_missing_params
     InGroup<SwiftNameAttribute>;
 
 def err_attr_swift_error_no_error_parameter : Error<
-  "%0 attribute can only be applied to a %select{function|method}1 with an "
-  "error parameter">;
+  "%0 attribute can only be applied to a %select{function|method}1 "
+  "with an error parameter">;
 def err_attr_swift_error_return_type : Error<
   "%0 attribute with '%1' convention can only be applied to a "
   "%select{function|method}2 returning %select{an integral type|a pointer}3">;
+def warn_swift_newtype_attribute_non_typedef : Warning<
+  "'swift_newtype' attribute may be put on a typedef only; "
+  "attribute is ignored">, InGroup<DiagGroup<"swift-newtype-attribute">>;
 
 def err_swift_async_no_access : Error<
   "first argument to 'swift_async' must be either 'none', 'swift_private', or "
@@ -4512,6 +4568,10 @@ def note_ovl_candidate_bad_ownership : Note<
     "%select{no|__unsafe_unretained|__strong|__weak|__autoreleasing}4 ownership,"
     " but parameter has %select{no|__unsafe_unretained|__strong|__weak|"
     "__autoreleasing}5 ownership">;
+def note_ovl_candidate_bad_ptrauth : Note<
+    "candidate %sub{select_ovl_candidate_kind}0,1,2 not viable: "
+    "%ordinal8 argument (%3) has %select{no ptrauth|%5}4 qualifier,"
+    " but parameter has %select{no ptrauth|%7}6 qualifier">;
 def note_ovl_candidate_bad_cvr_this : Note<
     "candidate %sub{select_ovl_candidate_kind}0,1,2 not viable: "
     "'this' argument has type %3, but method is not marked "
@@ -5526,7 +5586,7 @@ def note_deleted_special_member_class_subobject : Note<
   "%select{default|corresponding|default|default|default}4 constructor}0|"
   "destructor}5"
   "%select{||s||}4"
-  "|is an ObjC pointer}6">;
+  "|is an ObjC pointer|has an address-discriminated ptrauth qualifier}6">;
 def note_deleted_default_ctor_uninit_field : Note<
   "%select{default constructor of|constructor inherited by}0 "
   "%1 is implicitly deleted because field %2 of "
@@ -5847,8 +5907,11 @@ def err_anon_bitfield_has_negative_width : Error<
   "anonymous bit-field has negative width (%0)">;
 def err_bitfield_has_zero_width : Error<"named bit-field %0 has zero width">;
 def err_bitfield_width_exceeds_type_width : Error<
-  "width of%select{ anonymous|}0 bit-field%select{| %1}0 (%2 bits) exceeds the "
-  "%select{width|size}3 of its type (%4 bit%s4)">;
+  "width of bit-field %0 (%1 bits) exceeds %select{width|size}2 "
+  "of its type (%3 bit%s3)">;
+def err_anon_bitfield_width_exceeds_type_width : Error<
+  "width of anonymous bit-field (%0 bits) exceeds %select{width|size}1 "
+  "of its type (%2 bit%s2)">;
 def err_incorrect_number_of_vector_initializers : Error<
   "number of elements must be either one or match the size of the vector">;
 
@@ -6394,9 +6457,6 @@ def warn_pointer_arith_null_ptr : Warning<
 def warn_gnu_null_ptr_arith : Warning<
   "arithmetic on a null pointer treated as a cast from integer to pointer is a GNU extension">,
   InGroup<NullPointerArithmetic>, DefaultIgnore;
-def warn_pointer_sub_null_ptr : Warning<
-  "performing pointer subtraction with a null pointer %select{has|may have}0 undefined behavior">,
-  InGroup<NullPointerSubtraction>, DefaultIgnore;
 def err_kernel_invalidates_sycl_unique_stable_name
     : Error<"kernel instantiation changes the result of an evaluated "
             "'__builtin_sycl_unique_stable_name'">;
@@ -6495,6 +6555,12 @@ def warn_pessimizing_move_on_initialization : Warning<
   "moving a temporary object prevents copy elision">,
   InGroup<PessimizingMove>, DefaultIgnore;
 def note_remove_move : Note<"remove std::move call here">;
+
+def warn_return_std_move : Warning<
+  "local variable %0 will be copied despite being %select{returned|thrown}1 by name">,
+  InGroup<ReturnStdMove>, DefaultIgnore;
+def note_add_std_move : Note<
+  "call 'std::move' explicitly to avoid copying">;
 
 def warn_string_plus_int : Warning<
   "adding %0 to a string does not append to the string">,
@@ -7446,12 +7512,6 @@ def warn_deprecated_volatile_structured_binding : Warning<
   "volatile qualifier in structured binding declaration is deprecated">,
   InGroup<DeprecatedVolatile>;
 
-def warn_deprecated_altivec_src_compat : Warning<
-  "Current handling of vector bool and vector pixel types in this context are "
-  "deprecated. The default behaviour will soon change to that implied by the "
-  "'-altivec-compat=xl' option">,
-  InGroup<DiagGroup<"deprecated-altivec-src-compat">>;
-
 def err_catch_incomplete_ptr : Error<
   "cannot catch pointer to incomplete type %0">;
 def err_catch_incomplete_ref : Error<
@@ -8199,6 +8259,19 @@ def err_typecheck_incompatible_ownership : Error<
   "sending to parameter of different type}0,1"
   "|%diff{casting $ to type $|casting between types}0,1}2"
   " changes retain/release properties of pointer">;
+def err_typecheck_incompatible_ptrauth : Error<
+  "%select{%diff{assigning $ to $|assigning to different types}1,0"
+  "|%diff{passing $ to parameter of type $|"
+  "passing to parameter of different type}0,1"
+  "|%diff{returning $ from a function with result type $|"
+  "returning from function with different return type}0,1"
+  "|%diff{converting $ to type $|converting between types}0,1"
+  "|%diff{initializing $ with an expression of type $|"
+  "initializing with expression of different type}0,1"
+  "|%diff{sending $ to parameter of type $|"
+  "sending to parameter of different type}0,1"
+  "|%diff{casting $ to type $|casting between types}0,1}2"
+  " changes pointer-authentication of pointee type">;
 def err_typecheck_comparison_of_distinct_blocks : Error<
   "comparison of distinct block types%diff{ ($ and $)|}0,1">;
 
@@ -8535,9 +8608,6 @@ def err_typecheck_expect_scalar_operand : Error<
   "operand of type %0 where arithmetic or pointer type is required">;
 def err_typecheck_cond_incompatible_operands : Error<
   "incompatible operand types%diff{ ($ and $)|}0,1">;
-def err_typecheck_expect_flt_or_vector : Error<
-  "invalid operand of type %0 where floating, complex or "
-  "a vector of such types is required">;
 def err_cast_selector_expr : Error<
   "cannot type cast @selector expression">;
 def ext_typecheck_cond_incompatible_pointers : ExtWarn<
@@ -8547,6 +8617,8 @@ def ext_typecheck_cond_pointer_integer_mismatch : ExtWarn<
   "pointer/integer type mismatch in conditional expression"
   "%diff{ ($ and $)|}0,1">,
   InGroup<DiagGroup<"conditional-type-mismatch">>;
+def err_typecheck_cond_incompatible_ptrauth : Error<
+  "__ptrauth qualification mismatch%diff{ ($ and $)|}0,1">;
 def err_typecheck_choose_expr_requires_constant : Error<
   "'__builtin_choose_expr' requires a constant expression">;
 def warn_unused_expr : Warning<"expression result unused">,
@@ -9552,6 +9624,7 @@ def warn_missing_case : Warning<"%plural{"
   "3:enumeration values %1, %2, and %3 not handled in switch|"
   ":%0 enumeration values not handled in switch: %1, %2, %3...}0">,
   InGroup<Switch>;
+def note_fill_in_missing_cases : Note<"add missing switch cases">;
 
 def warn_unannotated_fallthrough : Warning<
   "unannotated fall-through between switch labels">,
@@ -9737,8 +9810,6 @@ def err_argument_not_shifted_byte : Error<
   "argument should be an 8-bit value shifted by a multiple of 8 bits">;
 def err_argument_not_shifted_byte_or_xxff : Error<
   "argument should be an 8-bit value shifted by a multiple of 8 bits, or in the form 0x??FF">;
-def err_argument_not_contiguous_bit_field : Error<
-  "argument %0 value should represent a contiguous bit field">;
 def err_rotation_argument_to_cadd
     : Error<"argument should be the value 90 or 270">;
 def err_rotation_argument_to_cmla
@@ -9767,8 +9838,8 @@ def err_mips_builtin_requires_dspr2 : Error<
   "this builtin requires 'dsp r2' ASE, please use -mdspr2">;
 def err_mips_builtin_requires_msa : Error<
   "this builtin requires 'msa' ASE, please use -mmsa">;
-def err_ppc_builtin_only_on_arch : Error<
-  "this builtin is only valid on POWER%0 or later CPUs">;
+def err_ppc_builtin_only_on_pwr7 : Error<
+  "this builtin is only valid on POWER7 or later CPUs">;
 def err_ppc_invalid_use_mma_type : Error<
   "invalid use of PPC MMA type">;
 def err_x86_builtin_invalid_rounding : Error<
@@ -10100,6 +10171,8 @@ def err_opencl_requires_extension : Error<
 def ext_opencl_double_without_pragma : Extension<
   "Clang permits use of type 'double' regardless pragma if 'cl_khr_fp64' is"
   " supported">;
+def err_opencl_double_requires_extension :  Error<
+    "use of type 'double' requires %select{cl_khr_fp64|cl_khr_fp64 and __opencl_c_fp64}0 support">;
 def warn_opencl_generic_address_space_arg : Warning<
   "passing non-generic address space pointer to %0"
   " may cause dynamic conversion affecting performance">,
@@ -10119,8 +10192,7 @@ def err_opencl_builtin_pipe_invalid_access_modifier : Error<
 def err_opencl_invalid_access_qualifier : Error<
   "access qualifier can only be used for pipe and image type">;
 def err_opencl_invalid_read_write : Error<
-  "access qualifier %0 can not be used for %1 %select{|prior to OpenCL C version 2.0 or in version 3.0 "
-  "and without __opencl_c_read_write_images feature}2">;
+  "access qualifier %0 can not be used for %1 %select{|prior to OpenCL version 2.0}2">;
 def err_opencl_multiple_access_qualifiers : Error<
   "multiple access qualifiers">;
 def note_opencl_typedef_access_qualifier : Note<
@@ -10168,6 +10240,13 @@ def warn_mig_server_routine_does_not_return_kern_return_t : Warning<
   "'mig_server_routine' attribute only applies to routines that return a kern_return_t">,
   InGroup<IgnoredAttributes>;
 } // end of sema category
+
+let CategoryName = "API Notes Issue" in {
+
+def err_incompatible_replacement_type : Error<
+  "API notes replacement type %0 has a different size from original type %1">;
+
+}
 
 let CategoryName = "OpenMP Issue" in {
 // OpenMP support.

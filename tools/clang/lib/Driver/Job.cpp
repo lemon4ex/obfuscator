@@ -7,10 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Driver/Job.h"
+#include "InputInfo.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/DriverDiagnostic.h"
-#include "clang/Driver/InputInfo.h"
 #include "clang/Driver/Tool.h"
 #include "clang/Driver/ToolChain.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -43,7 +43,7 @@ Command::Command(const Action &Source, const Tool &Creator,
       Executable(Executable), Arguments(Arguments) {
   for (const auto &II : Inputs)
     if (II.isFilename())
-      InputInfoList.push_back(II);
+      InputFilenames.push_back(II.getFilename());
   for (const auto &II : Outputs)
     if (II.isFilename())
       OutputFilenames.push_back(II.getFilename());
@@ -77,6 +77,8 @@ static bool skipArgs(const char *Flag, bool HaveCrashVFS, int &SkipNum,
     .Default(false);
   if (IsInclude)
     return !HaveCrashVFS;
+  if (StringRef(Flag).startswith("-index-store-path"))
+    return true;
 
   // The remaining flags are treated as a single argument.
 
@@ -97,6 +99,8 @@ static bool skipArgs(const char *Flag, bool HaveCrashVFS, int &SkipNum,
   if (IsInclude)
     return !HaveCrashVFS;
   if (FlagRef.startswith("-fmodules-cache-path="))
+    return true;
+  if (FlagRef.startswith("-fapinotes-cache-path="))
     return true;
 
   SkipNum = 0;
@@ -212,6 +216,7 @@ void Command::Print(raw_ostream &OS, const char *Terminator, bool Quote,
   }
 
   bool HaveCrashVFS = CrashInfo && !CrashInfo->VFSPath.empty();
+  bool HaveIndexStorePath = CrashInfo && !CrashInfo->IndexStorePath.empty();
   for (size_t i = 0, e = Args.size(); i < e; ++i) {
     const char *const Arg = Args[i];
 
@@ -237,10 +242,9 @@ void Command::Print(raw_ostream &OS, const char *Terminator, bool Quote,
         }
       }
 
-      auto Found = llvm::find_if(InputInfoList, [&Arg](const InputInfo &II) {
-        return II.getFilename() == Arg;
-      });
-      if (Found != InputInfoList.end() &&
+      auto Found = llvm::find_if(InputFilenames,
+                                 [&Arg](StringRef IF) { return IF == Arg; });
+      if (Found != InputFilenames.end() &&
           (i == 0 || StringRef(Args[i - 1]) != "-main-file-name")) {
         // Replace the input file name with the crashinfo's file name.
         OS << ' ';
@@ -276,6 +280,24 @@ void Command::Print(raw_ostream &OS, const char *Terminator, bool Quote,
     llvm::sys::printArg(OS, ModCachePath, Quote);
   }
 
+  if (CrashInfo && HaveIndexStorePath) {
+    SmallString<128> IndexStoreDir;
+
+    if (HaveCrashVFS) {
+      IndexStoreDir = llvm::sys::path::parent_path(
+          llvm::sys::path::parent_path(CrashInfo->VFSPath));
+      llvm::sys::path::append(IndexStoreDir, "index-store");
+    } else {
+      IndexStoreDir = "index-store";
+    }
+
+    OS << ' ';
+    llvm::sys::printArg(OS, "-index-store-path", Quote);
+    OS << ' ';
+    llvm::sys::printArg(OS, IndexStoreDir.c_str(), Quote);
+  }
+
+
   if (ResponseFile != nullptr) {
     OS << "\n Arguments passed via response file:\n";
     writeResponseFile(OS);
@@ -303,8 +325,8 @@ void Command::setEnvironment(llvm::ArrayRef<const char *> NewEnvironment) {
 
 void Command::PrintFileNames() const {
   if (PrintInputFilenames) {
-    for (const auto &Arg : InputInfoList)
-      llvm::outs() << llvm::sys::path::filename(Arg.getFilename()) << "\n";
+    for (const char *Arg : InputFilenames)
+      llvm::outs() << llvm::sys::path::filename(Arg) << "\n";
     llvm::outs().flush();
   }
 }

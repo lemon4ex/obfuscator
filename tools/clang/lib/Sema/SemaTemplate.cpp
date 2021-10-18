@@ -1079,7 +1079,7 @@ NamedDecl *Sema::ActOnTypeParameter(Scope *S, bool Typename,
       return Param;
 
     // Check the template argument itself.
-    if (CheckTemplateArgument(DefaultTInfo)) {
+    if (CheckTemplateArgument(Param, DefaultTInfo)) {
       Param->setInvalidDecl();
       return Param;
     }
@@ -2027,6 +2027,7 @@ DeclResult Sema::CheckClassTemplate(
     NewClass->startDefinition();
 
   ProcessDeclAttributeList(S, NewClass, Attr);
+  ProcessAPINotes(NewClass);
 
   if (PrevClassTemplate)
     mergeDeclAttributes(NewClass, PrevClassTemplate->getTemplatedDecl());
@@ -5042,7 +5043,7 @@ bool Sema::CheckTemplateTypeArgument(TemplateTypeParmDecl *Param,
   }
   }
 
-  if (CheckTemplateArgument(TSI))
+  if (CheckTemplateArgument(Param, TSI))
     return true;
 
   // Add the converted template type argument.
@@ -5661,7 +5662,7 @@ bool Sema::CheckTemplateArgumentList(
   TemplateArgumentListInfo NewArgs = TemplateArgs;
 
   // Make sure we get the template parameter list from the most
-  // recent declaration, since that is the only one that is guaranteed to
+  // recentdeclaration, since that is the only one that has is guaranteed to
   // have all the default template argument information.
   TemplateParameterList *Params =
       cast<TemplateDecl>(Template->getMostRecentDecl())
@@ -6208,7 +6209,8 @@ bool UnnamedLocalNoLinkageFinder::VisitNestedNameSpecifier(
 ///
 /// This routine implements the semantics of C++ [temp.arg.type]. It
 /// returns true if an error occurred, and false otherwise.
-bool Sema::CheckTemplateArgument(TypeSourceInfo *ArgInfo) {
+bool Sema::CheckTemplateArgument(TemplateTypeParmDecl *Param,
+                                 TypeSourceInfo *ArgInfo) {
   assert(ArgInfo && "invalid TypeSourceInfo");
   QualType Arg = ArgInfo->getType();
   SourceRange SR = ArgInfo->getTypeLoc().getSourceRange();
@@ -8535,6 +8537,7 @@ DeclResult Sema::ActOnClassTemplateSpecialization(
   }
 
   ProcessDeclAttributeList(S, Specialization, Attr);
+  ProcessAPINotes(Specialization);
 
   // Add alignment attributes if necessary; these attributes are checked when
   // the ASTContext lays out the structure.
@@ -9703,6 +9706,7 @@ DeclResult Sema::ActOnExplicitInstantiation(
 
   bool PreviouslyDLLExported = Specialization->hasAttr<DLLExportAttr>();
   ProcessDeclAttributeList(S, Specialization, Attr);
+  ProcessAPINotes(Specialization);
 
   // Add the explicit instantiation into its lexical context. However,
   // since explicit instantiations are never found by name lookup, we
@@ -10120,6 +10124,9 @@ DeclResult Sema::ActOnExplicitInstantiation(Scope *S,
       Prev->setTemplateSpecializationKind(TSK, D.getIdentifierLoc());
       // Merge attributes.
       ProcessDeclAttributeList(S, Prev, D.getDeclSpec().getAttributes());
+      if (PrevTemplate) {
+        ProcessAPINotes(Prev);
+      }
       if (TSK == TSK_ExplicitInstantiationDefinition)
         InstantiateVariableDefinition(D.getIdentifierLoc(), Prev);
     }
@@ -10295,6 +10302,7 @@ DeclResult Sema::ActOnExplicitInstantiation(Scope *S,
   }
 
   ProcessDeclAttributeList(S, Specialization, D.getDeclSpec().getAttributes());
+  ProcessAPINotes(Specialization);
 
   // In MSVC mode, dllimported explicit instantiation definitions are treated as
   // instantiation declarations.

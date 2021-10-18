@@ -84,6 +84,11 @@ CodeGenVTables::EmitVTTDefinition(llvm::GlobalVariable *VTT,
      Init = llvm::ConstantExpr::getPointerBitCastOrAddrSpaceCast(Init,
                                                                  CGM.Int8PtrTy);
 
+     if (auto &schema =
+             CGM.getCodeGenOpts().PointerAuth.CXXVTTVTablePointers)
+       Init = CGM.getConstantSignedPointer(Init, schema, nullptr, GlobalDecl(),
+                                           QualType());
+
      VTTComponents.push_back(Init);
   }
 

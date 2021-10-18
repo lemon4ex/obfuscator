@@ -1952,6 +1952,58 @@ Value *ScalarExprEmitter::VisitInitListExpr(InitListExpr *E) {
   return V;
 }
 
+static bool isDeclRefKnownNonNull(CodeGenFunction &CGF, const ValueDecl *D) {
+  return !D->isWeak();
+}
+
+static bool isLValueKnownNonNull(CodeGenFunction &CGF, const Expr *E) {
+  E = E->IgnoreParens();
+
+  if (auto UO = dyn_cast<UnaryOperator>(E)) {
+    if (UO->getOpcode() == UO_Deref) {
+      return CGF.isPointerKnownNonNull(UO->getSubExpr());
+    }
+  }
+
+  if (auto DRE = dyn_cast<DeclRefExpr>(E)) {
+    return isDeclRefKnownNonNull(CGF, DRE->getDecl());
+  } else if (auto ME = dyn_cast<MemberExpr>(E)) {
+    if (isa<FieldDecl>(ME->getMemberDecl()))
+      return true;
+    return isDeclRefKnownNonNull(CGF, ME->getMemberDecl());
+  }
+
+  // Array subscripts?  Anything else?
+
+  return false;
+}
+
+bool CodeGenFunction::isPointerKnownNonNull(const Expr *E) {
+  assert(E->getType()->isPointerType());
+
+  E = E->IgnoreParens();
+
+  if (isa<CXXThisExpr>(E))
+    return true;
+
+  if (auto UO = dyn_cast<UnaryOperator>(E)) {
+    if (UO->getOpcode() == UO_AddrOf) {
+      return isLValueKnownNonNull(*this, UO->getSubExpr());
+    }
+  }
+
+  if (auto CE = dyn_cast<CastExpr>(E)) {
+    if (CE->getCastKind() == CK_FunctionToPointerDecay ||
+        CE->getCastKind() == CK_ArrayToPointerDecay) {
+      return isLValueKnownNonNull(*this, CE->getSubExpr());
+    }
+  }
+
+  // Maybe honor __nonnull?
+
+  return false;
+}
+
 bool CodeGenFunction::ShouldNullCheckClassCastValue(const CastExpr *CE) {
   const Expr *E = CE->getSubExpr();
 
@@ -1965,7 +2017,7 @@ bool CodeGenFunction::ShouldNullCheckClassCastValue(const CastExpr *CE) {
 
   if (const ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(CE)) {
     // And that glvalue casts are never null.
-    if (ICE->isGLValue())
+    if (ICE->getValueKind() != VK_PRValue)
       return false;
   }
 
@@ -2095,11 +2147,24 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
          isa<llvm::ScalableVectorType>(DstTy)) ||
         (isa<llvm::ScalableVectorType>(SrcTy) &&
          isa<llvm::FixedVectorType>(DstTy))) {
-      Address Addr = CGF.CreateDefaultAlignTempAlloca(SrcTy, "saved-value");
-      LValue LV = CGF.MakeAddrLValue(Addr, E->getType());
-      CGF.EmitStoreOfScalar(Src, LV);
-      Addr = Builder.CreateElementBitCast(Addr, CGF.ConvertTypeForMem(DestTy),
-                                          "castFixedSve");
+      if (const CallExpr *CE = dyn_cast<CallExpr>(E)) {
+        // Call expressions can't have a scalar return unless the return type
+        // is a reference type so an lvalue can't be emitted. Create a temp
+        // alloca to store the call, bitcast the address then load.
+        QualType RetTy = CE->getCallReturnType(CGF.getContext());
+        Address Addr =
+            CGF.CreateDefaultAlignTempAlloca(SrcTy, "saved-call-rvalue");
+        LValue LV = CGF.MakeAddrLValue(Addr, RetTy);
+        CGF.EmitStoreOfScalar(Src, LV);
+        Addr = Builder.CreateElementBitCast(Addr, CGF.ConvertTypeForMem(DestTy),
+                                            "castFixedSve");
+        LValue DestLV = CGF.MakeAddrLValue(Addr, DestTy);
+        DestLV.setTBAAInfo(TBAAAccessInfo::getMayAliasInfo());
+        return EmitLoadOfLValue(DestLV, CE->getExprLoc());
+      }
+
+      Address Addr = EmitLValue(E).getAddress(CGF);
+      Addr = Builder.CreateElementBitCast(Addr, CGF.ConvertTypeForMem(DestTy));
       LValue DestLV = CGF.MakeAddrLValue(Addr, DestTy);
       DestLV.setTBAAInfo(TBAAAccessInfo::getMayAliasInfo());
       return EmitLoadOfLValue(DestLV, CE->getExprLoc());
@@ -2588,8 +2653,7 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
       llvm::Value *numElts = CGF.getVLASize(vla).NumElts;
       if (!isInc) numElts = Builder.CreateNSWNeg(numElts, "vla.negsize");
       if (CGF.getLangOpts().isSignedOverflowDefined())
-        value = Builder.CreateGEP(value->getType()->getPointerElementType(),
-                                  value, numElts, "vla.inc");
+        value = Builder.CreateGEP(value, numElts, "vla.inc");
       else
         value = CGF.EmitCheckedInBoundsGEP(
             value, numElts, /*SignedIndices=*/false, isSubtraction,
@@ -2601,7 +2665,7 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
 
       value = CGF.EmitCastToVoidPtr(value);
       if (CGF.getLangOpts().isSignedOverflowDefined())
-        value = Builder.CreateGEP(CGF.Int8Ty, value, amt, "incdec.funcptr");
+        value = Builder.CreateGEP(value, amt, "incdec.funcptr");
       else
         value = CGF.EmitCheckedInBoundsGEP(value, amt, /*SignedIndices=*/false,
                                            isSubtraction, E->getExprLoc(),
@@ -2612,8 +2676,7 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
     } else {
       llvm::Value *amt = Builder.getInt32(amount);
       if (CGF.getLangOpts().isSignedOverflowDefined())
-        value = Builder.CreateGEP(value->getType()->getPointerElementType(),
-                                  value, amt, "incdec.ptr");
+        value = Builder.CreateGEP(value, amt, "incdec.ptr");
       else
         value = CGF.EmitCheckedInBoundsGEP(value, amt, /*SignedIndices=*/false,
                                            isSubtraction, E->getExprLoc(),
@@ -2722,7 +2785,7 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
       llvm::ConstantInt::get(CGF.SizeTy, size.getQuantity());
 
     if (CGF.getLangOpts().isSignedOverflowDefined())
-      value = Builder.CreateGEP(CGF.Int8Ty, value, sizeValue, "incdec.objptr");
+      value = Builder.CreateGEP(value, sizeValue, "incdec.objptr");
     else
       value = CGF.EmitCheckedInBoundsGEP(value, sizeValue,
                                          /*SignedIndices=*/false, isSubtraction,
@@ -3447,7 +3510,7 @@ static Value *emitPointerArithmetic(CodeGenFunction &CGF,
     index = CGF.Builder.CreateMul(index, objectSize);
 
     Value *result = CGF.Builder.CreateBitCast(pointer, CGF.VoidPtrTy);
-    result = CGF.Builder.CreateGEP(CGF.Int8Ty, result, index, "add.ptr");
+    result = CGF.Builder.CreateGEP(result, index, "add.ptr");
     return CGF.Builder.CreateBitCast(result, pointer->getType());
   }
 
@@ -3463,9 +3526,7 @@ static Value *emitPointerArithmetic(CodeGenFunction &CGF,
     // multiply.  We suppress this if overflow is not undefined behavior.
     if (CGF.getLangOpts().isSignedOverflowDefined()) {
       index = CGF.Builder.CreateMul(index, numElements, "vla.index");
-      pointer = CGF.Builder.CreateGEP(
-          pointer->getType()->getPointerElementType(), pointer, index,
-          "add.ptr");
+      pointer = CGF.Builder.CreateGEP(pointer, index, "add.ptr");
     } else {
       index = CGF.Builder.CreateNSWMul(index, numElements, "vla.index");
       pointer =
@@ -3480,13 +3541,12 @@ static Value *emitPointerArithmetic(CodeGenFunction &CGF,
   // future proof.
   if (elementType->isVoidType() || elementType->isFunctionType()) {
     Value *result = CGF.EmitCastToVoidPtr(pointer);
-    result = CGF.Builder.CreateGEP(CGF.Int8Ty, result, index, "add.ptr");
+    result = CGF.Builder.CreateGEP(result, index, "add.ptr");
     return CGF.Builder.CreateBitCast(result, pointer->getType());
   }
 
   if (CGF.getLangOpts().isSignedOverflowDefined())
-    return CGF.Builder.CreateGEP(
-        pointer->getType()->getPointerElementType(), pointer, index, "add.ptr");
+    return CGF.Builder.CreateGEP(pointer, index, "add.ptr");
 
   return CGF.EmitCheckedInBoundsGEP(pointer, index, isSigned, isSubtraction,
                                     op.E->getExprLoc(), "add.ptr");
@@ -4195,6 +4255,20 @@ Value *ScalarExprEmitter::VisitBinAssign(const BinaryOperator *E) {
 
   Value *RHS;
   LValue LHS;
+
+  if (auto ptrauth = E->getLHS()->getType().getPointerAuth()) {
+    LValue LV = CGF.EmitCheckedLValue(E->getLHS(), CodeGenFunction::TCK_Store);
+    LV.getQuals().removePtrAuth();
+    llvm::Value *RV = CGF.EmitPointerAuthQualify(ptrauth, E->getRHS(),
+                                                 LV.getAddress(CGF));
+    CGF.EmitNullabilityCheck(LV, RV, E->getExprLoc());
+    CGF.EmitStoreThroughLValue(RValue::get(RV), LV);
+
+    if (Ignore) return nullptr;
+    RV = CGF.EmitPointerAuthUnqualify(ptrauth, RV, LV.getType(),
+                                      LV.getAddress(CGF), /*nonnull*/ false);
+    return RV;
+  }
 
   switch (E->getLHS()->getType().getObjCLifetime()) {
   case Qualifiers::OCL_Strong:
@@ -5018,13 +5092,13 @@ Value *
 CodeGenFunction::EmitCheckedInBoundsGEP(Value *Ptr, ArrayRef<Value *> IdxList,
                                         bool SignedIndices, bool IsSubtraction,
                                         SourceLocation Loc, const Twine &Name) {
-  llvm::Type *PtrTy = Ptr->getType();
-  Value *GEPVal = Builder.CreateInBoundsGEP(
-      PtrTy->getPointerElementType(), Ptr, IdxList, Name);
+  Value *GEPVal = Builder.CreateInBoundsGEP(Ptr, IdxList, Name);
 
   // If the pointer overflow sanitizer isn't enabled, do nothing.
   if (!SanOpts.has(SanitizerKind::PointerOverflow))
     return GEPVal;
+
+  llvm::Type *PtrTy = Ptr->getType();
 
   // Perform nullptr-and-offset check unless the nullptr is defined.
   bool PerformNullCheck = !NullPointerIsDefined(

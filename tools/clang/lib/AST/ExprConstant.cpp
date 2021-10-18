@@ -47,6 +47,7 @@
 #include "clang/AST/OSLog.h"
 #include "clang/AST/OptionalDiagnostic.h"
 #include "clang/AST/RecordLayout.h"
+#include "clang/AST/StableHash.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Basic/Builtins.h"
@@ -1963,6 +1964,19 @@ static bool IsStringLiteralCall(const CallExpr *E) {
           Builtin == Builtin::BI__builtin___NSStringMakeConstantString);
 }
 
+static bool isGlobalCallLValue(const CallExpr *E) {
+  if (IsStringLiteralCall(E))
+    return true;
+
+  switch (E->getBuiltinCallee()) {
+  case Builtin::BI__builtin_ptrauth_sign_constant:
+    return true;
+
+  default:
+    return false;
+  }
+}
+
 static bool IsGlobalLValue(APValue::LValueBase B) {
   // C++11 [expr.const]p3 An address constant expression is a prvalue core
   // constant expression of pointer type that evaluates to...
@@ -2006,7 +2020,7 @@ static bool IsGlobalLValue(APValue::LValueBase B) {
   case Expr::ObjCBoxedExprClass:
     return cast<ObjCBoxedExpr>(E)->isExpressibleAsConstantInitializer();
   case Expr::CallExprClass:
-    return IsStringLiteralCall(cast<CallExpr>(E));
+    return isGlobalCallLValue(cast<CallExpr>(E));
   // For GCC compatibility, &&label has static storage duration.
   case Expr::AddrLabelExprClass:
     return true;
@@ -9071,6 +9085,8 @@ bool PointerExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
   }
   case Builtin::BI__builtin_operator_new:
     return HandleOperatorNewCall(Info, E, Result);
+  case Builtin::BI__builtin_ptrauth_sign_constant:
+    return Success(E);
   case Builtin::BI__builtin_launder:
     return evaluatePointer(E->getArg(0), Result);
   case Builtin::BIstrchr:
@@ -9931,19 +9947,10 @@ bool RecordExprEvaluator::VisitCXXConstructExpr(const CXXConstructExpr *E,
     return false;
 
   // Avoid materializing a temporary for an elidable copy/move constructor.
-  if (E->isElidable() && !ZeroInit) {
-    // FIXME: This only handles the simplest case, where the source object
-    //        is passed directly as the first argument to the constructor.
-    //        This should also handle stepping though implicit casts and
-    //        and conversion sequences which involve two steps, with a
-    //        conversion operator followed by a converting constructor.
-    const Expr *SrcObj = E->getArg(0);
-    assert(SrcObj->isTemporaryObject(Info.Ctx, FD->getParent()));
-    assert(Info.Ctx.hasSameUnqualifiedType(E->getType(), SrcObj->getType()));
-    if (const MaterializeTemporaryExpr *ME =
-            dyn_cast<MaterializeTemporaryExpr>(SrcObj))
+  if (E->isElidable() && !ZeroInit)
+    if (const MaterializeTemporaryExpr *ME
+          = dyn_cast<MaterializeTemporaryExpr>(E->getArg(0)))
       return Visit(ME->getSubExpr());
-  }
 
   if (ZeroInit && !ZeroInitialization(E, T))
     return false;
@@ -11722,6 +11729,13 @@ bool IntExprEvaluator::VisitBuiltinCallExpr(const CallExpr *E,
   case Builtin::BI__builtin_expect_with_probability:
     return Visit(E->getArg(0));
 
+  case Builtin::BI__builtin_ptrauth_string_discriminator: {
+    auto literal = cast<StringLiteral>(E->getArg(0)->IgnoreParenImpCasts());
+    auto result = getPointerAuthStringDiscriminator(Info.Ctx,
+                                                    literal->getString());
+    return Success(result, E);
+  }
+
   case Builtin::BI__builtin_ffs:
   case Builtin::BI__builtin_ffsl:
   case Builtin::BI__builtin_ffsll: {
@@ -13021,6 +13035,12 @@ bool IntExprEvaluator::VisitUnaryExprOrTypeTraitExpr(
                      E);
   }
 
+  case UETT_PtrAuthTypeDiscriminator: {
+    if (E->getArgumentType()->isDependentType())
+      return false;
+    return Success(
+        Info.Ctx.getPointerAuthTypeDiscriminator(E->getArgumentType()), E);
+  }
   case UETT_VecStep: {
     QualType Ty = E->getTypeOfArgument();
 
@@ -13700,9 +13720,6 @@ bool FloatExprEvaluator::VisitCallExpr(const CallExpr *E) {
     if (Result.isNegative())
       Result.changeSign();
     return true;
-
-  case Builtin::BI__arithmetic_fence:
-    return EvaluateFloat(E->getArg(0), Result, Info);
 
   // FIXME: Builtin::BI__builtin_powi
   // FIXME: Builtin::BI__builtin_powif

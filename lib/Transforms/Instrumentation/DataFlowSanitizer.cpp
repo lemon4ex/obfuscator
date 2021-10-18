@@ -1397,8 +1397,7 @@ bool DataFlowSanitizer::runImpl(Module &M) {
     Changed = true;
     return new GlobalVariable(
         M, OriginTy, true, GlobalValue::WeakODRLinkage,
-        ConstantInt::getSigned(OriginTy,
-                               shouldTrackOrigins() ? ClTrackOrigins : 0),
+        ConstantInt::getSigned(OriginTy, shouldTrackOrigins()),
         "__dfsan_track_origins");
   });
 

@@ -959,10 +959,7 @@ static bool matchFormTruncstore(MachineInstr &MI, MachineRegisterInfo &MRI,
   if (MRI.getType(DstReg).isVector())
     return false;
   // Match a store of a truncate.
-  if (!mi_match(DstReg, MRI, m_GTrunc(m_Reg(SrcReg))))
-    return false;
-  // Only form truncstores for value types of max 64b.
-  return MRI.getType(SrcReg).getSizeInBits() <= 64;
+  return mi_match(DstReg, MRI, m_GTrunc(m_Reg(SrcReg)));
 }
 
 static bool applyFormTruncstore(MachineInstr &MI, MachineRegisterInfo &MRI,

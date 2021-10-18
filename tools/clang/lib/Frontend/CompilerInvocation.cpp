@@ -1303,6 +1303,91 @@ static void setPGOUseInstrumentor(CodeGenOptions &Opts,
     Opts.setProfileUse(CodeGenOptions::ProfileClangInstr);
 }
 
+static bool parsePointerAuthOptions(PointerAuthOptions &Opts,
+                                    ArgList &Args,
+                                    const LangOptions &LangOpts,
+                                    const llvm::Triple &Triple,
+                                    DiagnosticsEngine &Diags) {
+  if (!LangOpts.PointerAuthCalls && !LangOpts.PointerAuthReturns &&
+      !LangOpts.PointerAuthIndirectGotos && !LangOpts.PointerAuthAuthTraps)
+    return true;
+
+  if (LangOpts.SoftPointerAuth) {
+    if (LangOpts.PointerAuthCalls) {
+      using Key = PointerAuthSchema::SoftKey;
+      using Discrimination = PointerAuthSchema::Discrimination;
+      Opts.FunctionPointers =
+        PointerAuthSchema(Key::FunctionPointers, false, Discrimination::None);
+      Opts.BlockInvocationFunctionPointers =
+        PointerAuthSchema(Key::BlockInvocationFunctionPointers, true,
+                          Discrimination::None);
+      Opts.BlockHelperFunctionPointers =
+        PointerAuthSchema(Key::BlockHelperFunctionPointers, true,
+                          Discrimination::None);
+      Opts.BlockByrefHelperFunctionPointers =
+        PointerAuthSchema(Key::BlockHelperFunctionPointers, true,
+                          Discrimination::None);
+      Opts.ObjCMethodListFunctionPointers =
+        PointerAuthSchema(Key::ObjCMethodListFunctionPointers, true,
+                          Discrimination::None);
+      Opts.CXXVTablePointers =
+      Opts.CXXVTTVTablePointers =
+        PointerAuthSchema(Key::CXXVTablePointers, false,
+                          Discrimination::None);
+      Opts.CXXVirtualFunctionPointers =
+      Opts.CXXVirtualVariadicFunctionPointers =
+        PointerAuthSchema(Key::CXXVirtualFunctionPointers, true,
+                          Discrimination::Decl);
+      Opts.CXXMemberFunctionPointers =
+        PointerAuthSchema(Key::CXXMemberFunctionPointers, false,
+                          Discrimination::Type);
+      Opts.ThunkCXXVirtualMemberPointers = false;
+    }
+
+    Opts.ReturnAddresses = LangOpts.PointerAuthReturns;
+    Opts.IndirectGotos = LangOpts.PointerAuthIndirectGotos;
+    Opts.AuthTraps = LangOpts.PointerAuthAuthTraps;
+    return true;
+  }
+
+  if (Triple.getArch() == llvm::Triple::aarch64) {
+    if (LangOpts.PointerAuthCalls) {
+      using Key = PointerAuthSchema::ARM8_3Key;
+      using Discrimination = PointerAuthSchema::Discrimination;
+      // If you change anything here, be sure to update <ptrauth.h>.
+      Opts.FunctionPointers =
+        PointerAuthSchema(Key::ASIA, false, Discrimination::None);
+      Opts.BlockInvocationFunctionPointers =
+        PointerAuthSchema(Key::ASIA, true, Discrimination::None);
+      Opts.BlockHelperFunctionPointers =
+        PointerAuthSchema(Key::ASIA, true, Discrimination::None);
+      Opts.BlockByrefHelperFunctionPointers =
+        PointerAuthSchema(Key::ASIA, true, Discrimination::None);
+      Opts.ObjCMethodListFunctionPointers =
+        PointerAuthSchema(Key::ASIA, true, Discrimination::None);
+      Opts.CXXVTablePointers =
+        PointerAuthSchema(Key::ASDA, false, Discrimination::None);
+      Opts.CXXVTTVTablePointers =
+        PointerAuthSchema(Key::ASDA, false, Discrimination::None);
+      Opts.CXXVirtualFunctionPointers =
+      Opts.CXXVirtualVariadicFunctionPointers =
+        PointerAuthSchema(Key::ASIA, true, Discrimination::Decl);
+      Opts.CXXMemberFunctionPointers =
+        PointerAuthSchema(Key::ASIA, false, Discrimination::Type);
+      Opts.ThunkCXXVirtualMemberPointers = false;
+    }
+
+    Opts.ReturnAddresses = LangOpts.PointerAuthReturns;
+    Opts.IndirectGotos = LangOpts.PointerAuthIndirectGotos;
+    Opts.AuthTraps = LangOpts.PointerAuthAuthTraps;
+    return true;
+  }
+
+  Diags.Report(diag::err_drv_ptrauth_not_supported)
+    << Triple.str();
+  return false;
+}
+
 void CompilerInvocation::GenerateCodeGenArgs(
     const CodeGenOptions &Opts, SmallVectorImpl<const char *> &Args,
     StringAllocator SA, const llvm::Triple &T, const std::string &OutputFile,
@@ -1368,6 +1453,9 @@ void CompilerInvocation::GenerateCodeGenArgs(
   }
   if (DebugInfoVal)
     GenerateArg(Args, OPT_debug_info_kind_EQ, *DebugInfoVal, SA);
+
+  if (Opts.DebugInfo == codegenoptions::DebugInfoConstructor)
+    GenerateArg(Args, OPT_fuse_ctor_homing, SA);
 
   for (const auto &Prefix : Opts.DebugPrefixMap)
     GenerateArg(Args, OPT_fdebug_prefix_map_EQ,
@@ -1528,6 +1616,10 @@ void CompilerInvocation::GenerateCodeGenArgs(
   if (!Opts.EmitVersionIdentMetadata)
     GenerateArg(Args, OPT_Qn, SA);
 
+  if (!Opts.SplitColdCode && (Opts.OptimizationLevel > 0) &&
+      (Opts.OptimizeSize != 2))
+    GenerateArg(Args, OPT_fno_split_cold_code, SA);
+
   switch (Opts.FiniteLoops) {
   case CodeGenOptions::FiniteLoopsKind::Language:
     break;
@@ -1624,16 +1716,10 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
   }
 
   // If -fuse-ctor-homing is set and limited debug info is already on, then use
-  // constructor homing, and vice versa for -fno-use-ctor-homing.
-  if (const Arg *A =
-          Args.getLastArg(OPT_fuse_ctor_homing, OPT_fno_use_ctor_homing)) {
-    if (A->getOption().matches(OPT_fuse_ctor_homing) &&
-        Opts.getDebugInfo() == codegenoptions::LimitedDebugInfo)
+  // constructor homing.
+  if (Args.getLastArg(OPT_fuse_ctor_homing))
+    if (Opts.getDebugInfo() == codegenoptions::LimitedDebugInfo)
       Opts.setDebugInfo(codegenoptions::DebugInfoConstructor);
-    if (A->getOption().matches(OPT_fno_use_ctor_homing) &&
-        Opts.getDebugInfo() == codegenoptions::DebugInfoConstructor)
-      Opts.setDebugInfo(codegenoptions::LimitedDebugInfo);
-  }
 
   for (const auto &Arg : Args.getAllArgValues(OPT_fdebug_prefix_map_EQ)) {
     auto Split = StringRef(Arg).split('=');
@@ -1946,6 +2032,17 @@ bool CompilerInvocation::ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
                       Opts.SanitizeTrap);
 
   Opts.EmitVersionIdentMetadata = Args.hasFlag(OPT_Qy, OPT_Qn, true);
+
+  parsePointerAuthOptions(Opts.PointerAuth, Args, LangOptsRef, T, Diags);
+
+  // -f[no-]split-cold-code
+  // This may only be enabled when optimizing, and when small code size
+  // increases are tolerable.
+  //
+  // swift-clang: Enable hot/cold splitting by default.
+  Opts.SplitColdCode =
+      (Opts.OptimizationLevel > 0) && (Opts.OptimizeSize != 2) &&
+      Args.hasFlag(OPT_fsplit_cold_code, OPT_fno_split_cold_code, true);
 
   if (Args.hasArg(options::OPT_ffinite_loops))
     Opts.FiniteLoops = CodeGenOptions::FiniteLoopsKind::Always;
@@ -2621,24 +2718,24 @@ static bool ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
       StringRef ArgStr =
           Args.hasArg(OPT_interface_stub_version_EQ)
               ? Args.getLastArgValue(OPT_interface_stub_version_EQ)
-              : "ifs-v1";
+              : "experimental-ifs-v2";
       if (ArgStr == "experimental-yaml-elf-v1" ||
-          ArgStr == "experimental-ifs-v1" || ArgStr == "experimental-ifs-v2" ||
+          ArgStr == "experimental-ifs-v1" ||
           ArgStr == "experimental-tapi-elf-v1") {
         std::string ErrorMessage =
             "Invalid interface stub format: " + ArgStr.str() +
             " is deprecated.";
         Diags.Report(diag::err_drv_invalid_value)
             << "Must specify a valid interface stub format type, ie: "
-               "-interface-stub-version=ifs-v1"
+               "-interface-stub-version=experimental-ifs-v2"
             << ErrorMessage;
         ProgramAction = frontend::ParseSyntaxOnly;
-      } else if (!ArgStr.startswith("ifs-")) {
+      } else if (!ArgStr.startswith("experimental-ifs-")) {
         std::string ErrorMessage =
             "Invalid interface stub format: " + ArgStr.str() + ".";
         Diags.Report(diag::err_drv_invalid_value)
             << "Must specify a valid interface stub format type, ie: "
-               "-interface-stub-version=ifs-v1"
+               "-interface-stub-version=experimental-ifs-v2"
             << ErrorMessage;
         ProgramAction = frontend::ParseSyntaxOnly;
       }
@@ -3064,6 +3161,55 @@ static bool ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args,
   return Diags.getNumErrors() == NumErrorsBefore;
 }
 
+static void GenerateAPINotesArgs(const APINotesOptions &Opts,
+                                 SmallVectorImpl<const char *> &Args,
+                                 CompilerInvocation::StringAllocator SA) {
+  if (!Opts.SwiftVersion.empty())
+    GenerateArg(Args, OPT_fapinotes_swift_version,
+                Opts.SwiftVersion.getAsString(), SA);
+
+  for (const auto &Path : Opts.ModuleSearchPaths)
+    GenerateArg(Args, OPT_iapinotes_modules, Path, SA);
+}
+
+static void ParseAPINotesArgs(APINotesOptions &Opts, ArgList &Args,
+                              DiagnosticsEngine &diags) {
+  using namespace options;
+  if (const Arg *A = Args.getLastArg(OPT_fapinotes_swift_version)) {
+    if (Opts.SwiftVersion.tryParse(A->getValue()))
+      diags.Report(diag::err_drv_invalid_value)
+        << A->getAsString(Args) << A->getValue();
+  }
+  for (const Arg *A : Args.filtered(OPT_iapinotes_modules))
+    Opts.ModuleSearchPaths.push_back(A->getValue());
+}
+
+static void GeneratePointerAuthArgs(LangOptions &Opts,
+                                    SmallVectorImpl<const char *> &Args,
+                                    CompilerInvocation::StringAllocator SA) {
+  if (Opts.PointerAuthIntrinsics)
+    GenerateArg(Args, OPT_fptrauth_intrinsics, SA);
+  if (Opts.PointerAuthCalls)
+    GenerateArg(Args, OPT_fptrauth_calls, SA);
+  if (Opts.PointerAuthReturns)
+    GenerateArg(Args, OPT_fptrauth_returns, SA);
+  if (Opts.PointerAuthIndirectGotos)
+    GenerateArg(Args, OPT_fptrauth_indirect_gotos, SA);
+  if (Opts.PointerAuthAuthTraps)
+    GenerateArg(Args, OPT_fptrauth_auth_traps, SA);
+  if (Opts.SoftPointerAuth)
+    GenerateArg(Args, OPT_fptrauth_soft, SA);
+}
+
+static void ParsePointerAuthArgs(LangOptions &Opts, ArgList &Args) {
+  Opts.PointerAuthIntrinsics = Args.hasArg(OPT_fptrauth_intrinsics);
+  Opts.PointerAuthCalls = Args.hasArg(OPT_fptrauth_calls);
+  Opts.PointerAuthReturns = Args.hasArg(OPT_fptrauth_returns);
+  Opts.PointerAuthIndirectGotos = Args.hasArg(OPT_fptrauth_indirect_gotos);
+  Opts.PointerAuthAuthTraps = Args.hasArg(OPT_fptrauth_auth_traps);
+  Opts.SoftPointerAuth = Args.hasArg(OPT_fptrauth_soft);
+}
+
 void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
                                          const llvm::Triple &T,
                                          std::vector<std::string> &Includes,
@@ -3088,7 +3234,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     case Language::LLVM_IR:
       llvm_unreachable("Invalid input kind!");
     case Language::OpenCL:
-      LangStd = LangStandard::lang_opencl12;
+      LangStd = LangStandard::lang_opencl10;
       break;
     case Language::OpenCLCXX:
       LangStd = LangStandard::lang_openclcpp;
@@ -3173,7 +3319,7 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     Opts.ZVector = 0;
     Opts.setDefaultFPContractMode(LangOptions::FPM_On);
     Opts.OpenCLCPlusPlus = Opts.CPlusPlus;
-    Opts.OpenCLPipes = Opts.OpenCLCPlusPlus || Opts.OpenCLVersion == 200;
+    Opts.OpenCLPipe = Opts.OpenCLCPlusPlus || Opts.OpenCLVersion == 200;
     Opts.OpenCLGenericAddressSpace =
         Opts.OpenCLCPlusPlus || Opts.OpenCLVersion == 200;
 
@@ -3342,6 +3488,9 @@ void CompilerInvocation::GenerateLangArgs(const LangOptions &Opts,
       IMPLIED_CHECK, IMPLIED_VALUE, DENORMALIZER, EXTRACTOR, TABLE_INDEX)
 #include "clang/Driver/Options.inc"
 #undef LANG_OPTION_WITH_MARSHALLING
+
+  if (Opts.NeededByPCHOrCompilationUsesPCH)
+    GenerateArg(Args, OPT_fmodule_related_to_pch, SA);
 
   // The '-fcf-protection=' option is generated by CodeGenOpts generator.
 
@@ -3528,9 +3677,6 @@ void CompilerInvocation::GenerateLangArgs(const LangOptions &Opts,
     GenerateArg(Args, OPT_fexperimental_relative_cxx_abi_vtables, SA);
   else
     GenerateArg(Args, OPT_fno_experimental_relative_cxx_abi_vtables, SA);
-
-  for (const auto &MP : Opts.MacroPrefixMap)
-    GenerateArg(Args, OPT_fmacro_prefix_map_EQ, MP.first + "=" + MP.second, SA);
 }
 
 bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
@@ -3642,6 +3788,9 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
       IMPLIED_CHECK, IMPLIED_VALUE, NORMALIZER, MERGER, TABLE_INDEX)
 #include "clang/Driver/Options.inc"
 #undef LANG_OPTION_WITH_MARSHALLING
+
+  if (Args.hasArg(OPT_fmodule_related_to_pch))
+    Opts.NeededByPCHOrCompilationUsesPCH = true;
 
   if (const Arg *A = Args.getLastArg(OPT_fcf_protection_EQ)) {
     StringRef Name = A->getValue();
@@ -4040,12 +4189,6 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
                    options::OPT_fno_experimental_relative_cxx_abi_vtables,
                    TargetCXXABI::usesRelativeVTables(T));
 
-  for (const auto &A : Args.getAllArgValues(OPT_fmacro_prefix_map_EQ)) {
-    auto Split = StringRef(A).split('=');
-    Opts.MacroPrefixMap.insert(
-        {std::string(Split.first), std::string(Split.second)});
-  }
-
   return Diags.getNumErrors() == NumErrorsBefore;
 }
 
@@ -4118,6 +4261,9 @@ static void GeneratePreprocessorArgs(PreprocessorOptions &Opts,
   for (const auto &D : Opts.DeserializedPCHDeclsToErrorOn)
     GenerateArg(Args, OPT_error_on_deserialized_pch_decl, D, SA);
 
+  for (const auto &MP : Opts.MacroPrefixMap)
+    GenerateArg(Args, OPT_fmacro_prefix_map_EQ, MP.first + "=" + MP.second, SA);
+
   if (Opts.PrecompiledPreambleBytes != std::make_pair(0u, false))
     GenerateArg(Args, OPT_preamble_bytes_EQ,
                 Twine(Opts.PrecompiledPreambleBytes.first) + "," +
@@ -4185,6 +4331,12 @@ static bool ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
 
   for (const auto *A : Args.filtered(OPT_error_on_deserialized_pch_decl))
     Opts.DeserializedPCHDeclsToErrorOn.insert(A->getValue());
+
+  for (const auto &A : Args.getAllArgValues(OPT_fmacro_prefix_map_EQ)) {
+    auto Split = StringRef(A).split('=');
+    Opts.MacroPrefixMap.insert(
+        {std::string(Split.first), std::string(Split.second)});
+  }
 
   if (const Arg *A = Args.getLastArg(OPT_preamble_bytes_EQ)) {
     StringRef Value(A->getValue());
@@ -4344,6 +4496,28 @@ static bool ParseTargetArgs(TargetOptions &Opts, ArgList &Args,
   return Diags.getNumErrors() == NumErrorsBefore;
 }
 
+static void removeExplicitModuleBuildIncompatibleOptions(InputArgList &Args) {
+  auto REMBIO = llvm::find_if(Args, [](const Arg *A){
+    return A->getOption().getID() ==
+        OPT_remove_preceeding_explicit_module_build_incompatible_options;
+  });
+  if (REMBIO == Args.end())
+    return;
+
+  llvm::SmallPtrSet<const Arg *, 32> BeforeREMBIO;
+  for (auto I = Args.begin(); I != REMBIO; ++I)
+    BeforeREMBIO.insert(*I);
+
+  Args.eraseArgIf([&](const Arg *A) {
+    if (!BeforeREMBIO.count(A))
+      return false;
+    const Option &O = A->getOption();
+    return O.matches(OPT_INPUT) ||
+           O.matches(OPT_Action_Group) ||
+           O.matches(OPT__output);
+  });
+}
+
 bool CompilerInvocation::CreateFromArgsImpl(
     CompilerInvocation &Res, ArrayRef<const char *> CommandLineArgs,
     DiagnosticsEngine &Diags, const char *Argv0) {
@@ -4355,6 +4529,9 @@ bool CompilerInvocation::CreateFromArgsImpl(
   unsigned MissingArgIndex, MissingArgCount;
   InputArgList Args = Opts.ParseArgs(CommandLineArgs, MissingArgIndex,
                                      MissingArgCount, IncludedFlagsBitmask);
+
+  removeExplicitModuleBuildIncompatibleOptions(Args);
+
   LangOptions &LangOpts = *Res.getLangOpts();
 
   // Check for missing argument error.
@@ -4385,6 +4562,8 @@ bool CompilerInvocation::CreateFromArgsImpl(
   llvm::Triple T(Res.getTargetOpts().Triple);
   ParseHeaderSearchArgs(Res.getHeaderSearchOpts(), Args, Diags,
                         Res.getFileSystemOpts().WorkingDir);
+  ParseAPINotesArgs(Res.getAPINotesOpts(), Args, Diags);
+  ParsePointerAuthArgs(LangOpts, Args);
 
   ParseLangArgs(LangOpts, Args, DashX, T, Res.getPreprocessorOpts().Includes,
                 Diags);
@@ -4427,6 +4606,10 @@ bool CompilerInvocation::CreateFromArgsImpl(
       Res.getDependencyOutputOpts().Targets.empty())
     Diags.Report(diag::err_fe_dependency_file_requires_MT);
 
+  if (!Res.getPreprocessorOpts().ImplicitPCHInclude.empty() ||
+      Res.getFrontendOpts().ProgramAction == frontend::GeneratePCH)
+    LangOpts.NeededByPCHOrCompilationUsesPCH = true;
+
   // If sanitizer is enabled, disable OPT_ffine_grained_bitfield_accesses.
   if (Res.getCodeGenOpts().FineGrainedBitfieldAccesses &&
       !Res.getLangOpts()->Sanitize.empty()) {
@@ -4459,7 +4642,16 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Invocation,
       Invocation, DummyInvocation, CommandLineArgs, Diags, Argv0);
 }
 
-std::string CompilerInvocation::getModuleHash() const {
+// Some extension diagnostics aren't explicitly mapped and require custom
+// logic in the dianognostic engine to be used, track -pedantic-errors
+static bool isExtHandlingFromDiagsError(DiagnosticsEngine &Diags) {
+  diag::Severity Ext = Diags.getExtensionHandlingBehavior();
+  if (Ext == diag::Severity::Warning && Diags.getWarningsAsErrors())
+    return true;
+  return Ext >= diag::Severity::Error;
+}
+
+std::string CompilerInvocation::getModuleHash(DiagnosticsEngine &Diags) const {
   // Note: For QoI reasons, the things we use as a hash here should all be
   // dumped via the -module-info flag.
   using llvm::hash_code;
@@ -4553,7 +4745,19 @@ std::string CompilerInvocation::getModuleHash() const {
   // Extend the signature with the module file extensions.
   const FrontendOptions &frontendOpts = getFrontendOpts();
   for (const auto &ext : frontendOpts.ModuleFileExtensions) {
-    code = ext->hashExtension(code);
+    code = hash_combine(code, ext->hashExtension(code));
+  }
+
+  // Extend the signature with the SWift version for API notes.
+  const APINotesOptions &apiNotesOpts = getAPINotesOpts();
+  if (apiNotesOpts.SwiftVersion) {
+    code = hash_combine(code, apiNotesOpts.SwiftVersion.getMajor());
+    if (auto minor = apiNotesOpts.SwiftVersion.getMinor())
+      code = hash_combine(code, *minor);
+    if (auto subminor = apiNotesOpts.SwiftVersion.getSubminor())
+      code = hash_combine(code, *subminor);
+    if (auto build = apiNotesOpts.SwiftVersion.getBuild())
+      code = hash_combine(code, *build);
   }
 
   // When compiling with -gmodules, also hash -fdebug-prefix-map as it
@@ -4569,6 +4773,24 @@ std::string CompilerInvocation::getModuleHash() const {
   if (!SanHash.empty())
     code = hash_combine(code, SanHash.Mask);
 
+  // Check for a couple things (see checkDiagnosticMappings in ASTReader.cpp):
+  //  -Werror: consider all warnings into the hash
+  //  -Werror=something: consider only the specified into the hash
+  //  -pedantic-error
+  if (getLangOpts()->ModulesHashErrorDiags) {
+    bool ConsiderAllWarningsAsErrors = Diags.getWarningsAsErrors();
+    code = hash_combine(code, isExtHandlingFromDiagsError(Diags));
+    for (auto DiagIDMappingPair : Diags.getDiagnosticMappings()) {
+      diag::kind DiagID = DiagIDMappingPair.first;
+      auto CurLevel = Diags.getDiagnosticLevel(DiagID, SourceLocation());
+      if (CurLevel < DiagnosticsEngine::Error && !ConsiderAllWarningsAsErrors)
+        continue; // not significant
+      code = hash_combine(
+          code,
+          Diags.getDiagnosticIDs()->getWarningOptionForDiag(DiagID).str());
+    }
+  }
+
   return toString(llvm::APInt(64, code), 36, /*Signed=*/false);
 }
 
@@ -4583,6 +4805,8 @@ void CompilerInvocation::generateCC1CommandLine(
   GenerateFrontendArgs(FrontendOpts, Args, SA, LangOpts->IsHeaderFile);
   GenerateTargetArgs(*TargetOpts, Args, SA);
   GenerateHeaderSearchArgs(*HeaderSearchOpts, Args, SA);
+  GenerateAPINotesArgs(APINotesOpts, Args, SA);
+  GeneratePointerAuthArgs(*LangOpts, Args, SA);
   GenerateLangArgs(*LangOpts, Args, SA, T, FrontendOpts.DashX);
   GenerateCodeGenArgs(CodeGenOpts, Args, SA, T, FrontendOpts.OutputFile,
                       &*LangOpts);

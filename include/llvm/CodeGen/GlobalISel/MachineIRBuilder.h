@@ -205,6 +205,14 @@ private:
   SrcType Ty;
 };
 
+class FlagsOp {
+  Optional<unsigned> Flags;
+
+public:
+  explicit FlagsOp(unsigned F) : Flags(F) {}
+  FlagsOp() : Flags(None) {}
+  Optional<unsigned> getFlags() const { return Flags; }
+};
 /// Helper class to build MachineInstr.
 /// It keeps internally the insertion point and debug location for all
 /// the new instructions we want to create.

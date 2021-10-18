@@ -1370,19 +1370,17 @@ SDValue SelectionDAGLegalize::ExpandExtractFromVectorThroughStack(SDValue Op) {
                       MachinePointerInfo());
   }
 
+  StackPtr = TLI.getVectorElementPointer(DAG, StackPtr, VecVT, Idx);
+
   SDValue NewLoad;
 
-  if (Op.getValueType().isVector()) {
-    StackPtr = TLI.getVectorSubVecPointer(DAG, StackPtr, VecVT,
-                                          Op.getValueType(), Idx);
+  if (Op.getValueType().isVector())
     NewLoad =
         DAG.getLoad(Op.getValueType(), dl, Ch, StackPtr, MachinePointerInfo());
-  } else {
-    StackPtr = TLI.getVectorElementPointer(DAG, StackPtr, VecVT, Idx);
+  else
     NewLoad = DAG.getExtLoad(ISD::EXTLOAD, dl, Op.getValueType(), Ch, StackPtr,
                              MachinePointerInfo(),
                              VecVT.getVectorElementType());
-  }
 
   // Replace the chain going out of the store, by the one out of the load.
   DAG.ReplaceAllUsesOfValueWith(Ch, SDValue(NewLoad.getNode(), 1));
@@ -1407,7 +1405,6 @@ SDValue SelectionDAGLegalize::ExpandInsertToVectorThroughStack(SDValue Op) {
 
   // Store the value to a temporary stack slot, then LOAD the returned part.
   EVT VecVT = Vec.getValueType();
-  EVT SubVecVT = Part.getValueType();
   SDValue StackPtr = DAG.CreateStackTemporary(VecVT);
   int FI = cast<FrameIndexSDNode>(StackPtr.getNode())->getIndex();
   MachinePointerInfo PtrInfo =
@@ -1417,8 +1414,7 @@ SDValue SelectionDAGLegalize::ExpandInsertToVectorThroughStack(SDValue Op) {
   SDValue Ch = DAG.getStore(DAG.getEntryNode(), dl, Vec, StackPtr, PtrInfo);
 
   // Then store the inserted part.
-  SDValue SubStackPtr =
-      TLI.getVectorSubVecPointer(DAG, StackPtr, VecVT, SubVecVT, Idx);
+  SDValue SubStackPtr = TLI.getVectorElementPointer(DAG, StackPtr, VecVT, Idx);
 
   // Store the subvector.
   Ch = DAG.getStore(

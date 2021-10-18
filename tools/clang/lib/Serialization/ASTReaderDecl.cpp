@@ -1286,6 +1286,8 @@ void ASTDeclReader::VisitObjCCategoryDecl(ObjCCategoryDecl *CD) {
 void ASTDeclReader::VisitObjCCompatibleAliasDecl(ObjCCompatibleAliasDecl *CAD) {
   VisitNamedDecl(CAD);
   CAD->setClassInterface(readDeclAs<ObjCInterfaceDecl>());
+  CAD->setClassInterfaceLoc(readSourceLocation());
+  CAD->setAtLoc(readSourceLocation());
 }
 
 void ASTDeclReader::VisitObjCPropertyDecl(ObjCPropertyDecl *D) {
@@ -2761,6 +2763,8 @@ public:
 
   Expr *readExpr() { return Reader.readExpr(); }
 
+  Attr *readAttr() { return Reader.readAttr(); }
+
   std::string readString() {
     return Reader.readString();
   }
@@ -3067,7 +3071,7 @@ static bool hasSameOverloadableAttrs(const FunctionDecl *A,
   return true;
 }
 
-/// Determine whether the two declarations refer to the same entity.
+/// Determine whether the two declarations refer to the same entity.pr
 static bool isSameEntity(NamedDecl *X, NamedDecl *Y) {
   assert(X->getDeclName() == Y->getDeclName() && "Declaration name mismatch!");
 
@@ -3261,19 +3265,10 @@ static bool isSameEntity(NamedDecl *X, NamedDecl *Y) {
     return isSameQualifier(UX->getQualifier(), UY->getQualifier()) &&
            UX->isAccessDeclaration() == UY->isAccessDeclaration();
   }
-  if (const auto *UX = dyn_cast<UnresolvedUsingTypenameDecl>(X)) {
+  if (const auto *UX = dyn_cast<UnresolvedUsingTypenameDecl>(X))
     return isSameQualifier(
         UX->getQualifier(),
         cast<UnresolvedUsingTypenameDecl>(Y)->getQualifier());
-  }
-
-  // Using-pack declarations are only created by instantiation, and match if
-  // they're instantiated from matching UnresolvedUsing...Decls.
-  if (const auto *UX = dyn_cast<UsingPackDecl>(X)) {
-    return declaresSameEntity(
-        UX->getInstantiatedFromUsingDecl(),
-        cast<UsingPackDecl>(Y)->getInstantiatedFromUsingDecl());
-  }
 
   // Namespace alias definitions with the same target match.
   if (const auto *NAX = dyn_cast<NamespaceAliasDecl>(X)) {

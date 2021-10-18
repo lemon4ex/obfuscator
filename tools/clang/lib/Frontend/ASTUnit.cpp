@@ -807,8 +807,7 @@ std::unique_ptr<ASTUnit> ASTUnit::LoadFromASTFile(
   if (ToLoad >= LoadASTOnly)
     AST->Ctx = new ASTContext(*AST->LangOpts, AST->getSourceManager(),
                               PP.getIdentifierTable(), PP.getSelectorTable(),
-                              PP.getBuiltinInfo(),
-                              AST->getTranslationUnitKind());
+                              PP.getBuiltinInfo());
 
   DisableValidationForModuleKind disableValid =
       DisableValidationForModuleKind::None;
@@ -1757,6 +1756,9 @@ ASTUnit *ASTUnit::LoadFromCommandLine(
   if (ModuleFormat)
     CI->getHeaderSearchOpts().ModuleFormat =
         std::string(ModuleFormat.getValue());
+
+  if (ForSerialization)
+    CI->getLangOpts()->NeededByPCHOrCompilationUsesPCH = true;
 
   // Create the AST unit.
   std::unique_ptr<ASTUnit> AST;

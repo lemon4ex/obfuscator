@@ -127,6 +127,22 @@ unsigned AArch64InstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     // This gets lowered to 1 4-byte instructions.
     NumBytes = 4;
     break;
+  case AArch64::AUT:
+    NumBytes = 24;
+    break;
+  case AArch64::AUTPAC:
+    NumBytes = 28;
+    break;
+  case AArch64::MOVaddrPAC:
+    // 12 fixed + 16 variable, for pointer offset, and discriminator
+    // We could potentially model the variable size overhead more accurately.
+    NumBytes = 28;
+    break;
+  case AArch64::BR_JumpTable:
+    // 28 fixed + 16 variable, for table size materialization
+    // We could potentially model the variable size overhead more accurately.
+    NumBytes = 44;
+    break;
   case AArch64::JumpTableDest32:
   case AArch64::JumpTableDest16:
   case AArch64::JumpTableDest8:
@@ -1120,16 +1136,6 @@ bool AArch64InstrInfo::analyzeCompare(const MachineInstr &MI, Register &SrcReg,
   if (!MI.getOperand(1).isReg())
     return false;
 
-  auto NormalizeCmpValue = [](int64_t Value) -> int {
-    // Comparison immediates may be 64-bit, but CmpValue is only an int.
-    // Normalize to 0/1/2 return value, where 2 indicates any value apart from
-    // 0 or 1.
-    // TODO: Switch CmpValue to int64_t in the API to avoid this.
-    if (Value == 0 || Value == 1)
-      return Value;
-    return 2;
-  };
-
   switch (MI.getOpcode()) {
   default:
     break;
@@ -1165,7 +1171,8 @@ bool AArch64InstrInfo::analyzeCompare(const MachineInstr &MI, Register &SrcReg,
     SrcReg = MI.getOperand(1).getReg();
     SrcReg2 = 0;
     CmpMask = ~0;
-    CmpValue = NormalizeCmpValue(MI.getOperand(2).getImm());
+    // FIXME: In order to convert CmpValue to 0 or 1
+    CmpValue = MI.getOperand(2).getImm() != 0;
     return true;
   case AArch64::ANDSWri:
   case AArch64::ANDSXri:
@@ -1174,9 +1181,14 @@ bool AArch64InstrInfo::analyzeCompare(const MachineInstr &MI, Register &SrcReg,
     SrcReg = MI.getOperand(1).getReg();
     SrcReg2 = 0;
     CmpMask = ~0;
-    CmpValue = NormalizeCmpValue(AArch64_AM::decodeLogicalImmediate(
+    // FIXME:The return val type of decodeLogicalImmediate is uint64_t,
+    // while the type of CmpValue is int. When converting uint64_t to int,
+    // the high 32 bits of uint64_t will be lost.
+    // In fact it causes a bug in spec2006-483.xalancbmk
+    // CmpValue is only used to compare with zero in OptimizeCompareInstr
+    CmpValue = AArch64_AM::decodeLogicalImmediate(
                    MI.getOperand(2).getImm(),
-                   MI.getOpcode() == AArch64::ANDSWri ? 32 : 64));
+                   MI.getOpcode() == AArch64::ANDSWri ? 32 : 64) != 0;
     return true;
   }
 
@@ -1466,9 +1478,10 @@ bool AArch64InstrInfo::optimizeCompareInstr(
   if (CmpInstr.getOpcode() == AArch64::PTEST_PP)
     return optimizePTestInstr(&CmpInstr, SrcReg, SrcReg2, MRI);
 
-  // Warning: CmpValue == 2 indicates *any* value apart from 0 or 1.
-  assert((CmpValue == 0 || CmpValue == 1 || CmpValue == 2) &&
-         "CmpValue must be 0, 1, or 2!");
+  // Continue only if we have a "ri" where immediate is zero.
+  // FIXME:CmpValue has already been converted to 0 or 1 in analyzeCompare
+  // function.
+  assert((CmpValue == 0 || CmpValue == 1) && "CmpValue must be 0 or 1!");
   if (SrcReg2 != 0)
     return false;
 
@@ -1476,10 +1489,9 @@ bool AArch64InstrInfo::optimizeCompareInstr(
   if (!MRI->use_nodbg_empty(CmpInstr.getOperand(0).getReg()))
     return false;
 
-  if (CmpValue == 0 && substituteCmpToZero(CmpInstr, SrcReg, *MRI))
+  if (!CmpValue && substituteCmpToZero(CmpInstr, SrcReg, *MRI))
     return true;
-  return (CmpValue == 0 || CmpValue == 1) &&
-         removeCmpToZeroOrOne(CmpInstr, SrcReg, CmpValue, *MRI);
+  return removeCmpToZeroOrOne(CmpInstr, SrcReg, CmpValue, *MRI);
 }
 
 /// Get opcode of S version of Instr.
@@ -2304,22 +2316,6 @@ unsigned AArch64InstrInfo::getLoadStoreImmIdx(unsigned Opc) {
   case AArch64::LD1B_D_IMM:
   case AArch64::LD1SB_D_IMM:
   case AArch64::ST1B_D_IMM:
-  case AArch64::LD1RB_IMM:
-  case AArch64::LD1RB_H_IMM:
-  case AArch64::LD1RB_S_IMM:
-  case AArch64::LD1RB_D_IMM:
-  case AArch64::LD1RSB_H_IMM:
-  case AArch64::LD1RSB_S_IMM:
-  case AArch64::LD1RSB_D_IMM:
-  case AArch64::LD1RH_IMM:
-  case AArch64::LD1RH_S_IMM:
-  case AArch64::LD1RH_D_IMM:
-  case AArch64::LD1RSH_S_IMM:
-  case AArch64::LD1RSH_D_IMM:
-  case AArch64::LD1RW_IMM:
-  case AArch64::LD1RW_D_IMM:
-  case AArch64::LD1RSW_IMM:
-  case AArch64::LD1RD_IMM:
     return 3;
   case AArch64::ADDG:
   case AArch64::STGOffset:
@@ -2931,42 +2927,6 @@ bool AArch64InstrInfo::getMemOpInfo(unsigned Opcode, TypeSize &Scale,
     Scale = TypeSize::Fixed(16);
     Width = 16;
     MinOffset = -64;
-    MaxOffset = 63;
-    break;
-  case AArch64::LD1RB_IMM:
-  case AArch64::LD1RB_H_IMM:
-  case AArch64::LD1RB_S_IMM:
-  case AArch64::LD1RB_D_IMM:
-  case AArch64::LD1RSB_H_IMM:
-  case AArch64::LD1RSB_S_IMM:
-  case AArch64::LD1RSB_D_IMM:
-    Scale = TypeSize::Fixed(1);
-    Width = 1;
-    MinOffset = 0;
-    MaxOffset = 63;
-    break;
-  case AArch64::LD1RH_IMM:
-  case AArch64::LD1RH_S_IMM:
-  case AArch64::LD1RH_D_IMM:
-  case AArch64::LD1RSH_S_IMM:
-  case AArch64::LD1RSH_D_IMM:
-    Scale = TypeSize::Fixed(2);
-    Width = 2;
-    MinOffset = 0;
-    MaxOffset = 63;
-    break;
-  case AArch64::LD1RW_IMM:
-  case AArch64::LD1RW_D_IMM:
-  case AArch64::LD1RSW_IMM:
-    Scale = TypeSize::Fixed(4);
-    Width = 4;
-    MinOffset = 0;
-    MaxOffset = 63;
-    break;
-  case AArch64::LD1RD_IMM:
-    Scale = TypeSize::Fixed(8);
-    Width = 8;
-    MinOffset = 0;
     MaxOffset = 63;
     break;
   }
@@ -3625,11 +3585,6 @@ void AArch64InstrInfo::copyPhysReg(MachineBasicBlock &MBB,
     return;
   }
 
-#ifndef NDEBUG
-  const TargetRegisterInfo &TRI = getRegisterInfo();
-  errs() << TRI.getRegAsmName(DestReg) << " = COPY "
-         << TRI.getRegAsmName(SrcReg) << "\n";
-#endif
   llvm_unreachable("unimplemented reg-to-reg copy");
 }
 

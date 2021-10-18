@@ -833,10 +833,7 @@ void CodeGenRegisterClass::inheritProperties(CodeGenRegBank &RegBank) {
   Namespace = Super.Namespace;
   VTs = Super.VTs;
   CopyCost = Super.CopyCost;
-  // Check for allocatable superclasses.
-  Allocatable = any_of(SuperClasses, [&](const CodeGenRegisterClass *S) {
-    return S->Allocatable;
-  });
+  Allocatable = Super.Allocatable;
   AltOrderSelect = Super.AltOrderSelect;
   AllocationPriority = Super.AllocationPriority;
   GeneratePressureSet |= Super.GeneratePressureSet;

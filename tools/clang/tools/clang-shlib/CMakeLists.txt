@@ -50,6 +50,6 @@ add_clang_library(clang-cpp
                   ${_DEPS})
 # Optimize function calls for default visibility definitions to avoid PLT and
 # reduce dynamic relocations.
-if (NOT APPLE AND NOT MINGW)
+if (NOT APPLE)
   target_link_options(clang-cpp PRIVATE LINKER:-Bsymbolic-functions)
 endif()

@@ -865,7 +865,7 @@ public:
   handleRemovalFromIntersection(const FactSet &FSet, FactManager &FactMan,
                                 SourceLocation JoinLoc, LockErrorKind LEK,
                                 ThreadSafetyHandler &Handler) const override {
-    if (!asserted() && !negative() && !isUniversal()) {
+    if (!managed() && !asserted() && !negative() && !isUniversal()) {
       Handler.handleMutexHeldEndOfScope("mutex", toString(), loc(), JoinLoc,
                                         LEK);
     }
@@ -1050,15 +1050,15 @@ public:
                       const CFGBlock* PredBlock,
                       const CFGBlock *CurrBlock);
 
-  bool join(const FactEntry &a, const FactEntry &b, bool CanModify);
+  bool join(const FactEntry &a, const FactEntry &b);
 
-  void intersectAndWarn(FactSet &EntrySet, const FactSet &ExitSet,
-                        SourceLocation JoinLoc, LockErrorKind EntryLEK,
-                        LockErrorKind ExitLEK);
+  void intersectAndWarn(FactSet &FSet1, const FactSet &FSet2,
+                        SourceLocation JoinLoc, LockErrorKind LEK1,
+                        LockErrorKind LEK2);
 
-  void intersectAndWarn(FactSet &EntrySet, const FactSet &ExitSet,
-                        SourceLocation JoinLoc, LockErrorKind LEK) {
-    intersectAndWarn(EntrySet, ExitSet, JoinLoc, LEK, LEK);
+  void intersectAndWarn(FactSet &FSet1, const FactSet &FSet2,
+                        SourceLocation JoinLoc, LockErrorKind LEK1) {
+    intersectAndWarn(FSet1, FSet2, JoinLoc, LEK1, LEK1);
   }
 
   void runAnalysis(AnalysisDeclContext &AC);
@@ -2188,28 +2188,25 @@ void BuildLockset::VisitDeclStmt(const DeclStmt *S) {
   }
 }
 
-/// Given two facts merging on a join point, possibly warn and decide whether to
-/// keep or replace.
+/// Given two facts merging on a join point, decide whether to warn and which
+/// one to keep.
 ///
-/// \param CanModify Whether we can replace \p A by \p B.
-/// \return  false if we should keep \p A, true if we should take \p B.
-bool ThreadSafetyAnalyzer::join(const FactEntry &A, const FactEntry &B,
-                                bool CanModify) {
+/// \return  false if we should keep \p A, true if we should keep \p B.
+bool ThreadSafetyAnalyzer::join(const FactEntry &A, const FactEntry &B) {
   if (A.kind() != B.kind()) {
     // For managed capabilities, the destructor should unlock in the right mode
     // anyway. For asserted capabilities no unlocking is needed.
     if ((A.managed() || A.asserted()) && (B.managed() || B.asserted())) {
-      // The shared capability subsumes the exclusive capability, if possible.
-      bool ShouldTakeB = B.kind() == LK_Shared;
-      if (CanModify || !ShouldTakeB)
-        return ShouldTakeB;
+      // The shared capability subsumes the exclusive capability.
+      return B.kind() == LK_Shared;
+    } else {
+      Handler.handleExclusiveAndShared("mutex", B.toString(), B.loc(), A.loc());
+      // Take the exclusive capability to reduce further warnings.
+      return B.kind() == LK_Exclusive;
     }
-    Handler.handleExclusiveAndShared("mutex", B.toString(), B.loc(), A.loc());
-    // Take the exclusive capability to reduce further warnings.
-    return CanModify && B.kind() == LK_Exclusive;
   } else {
     // The non-asserted capability is the one we want to track.
-    return CanModify && A.asserted() && !B.asserted();
+    return A.asserted() && !B.asserted();
   }
 }
 
@@ -2222,44 +2219,42 @@ bool ThreadSafetyAnalyzer::join(const FactEntry &A, const FactEntry &B,
 /// are the same. In the event of a difference, we use the intersection of these
 /// two locksets at the start of D.
 ///
-/// \param EntrySet A lockset for entry into a (possibly new) block.
-/// \param ExitSet The lockset on exiting a preceding block.
+/// \param FSet1 The first lockset.
+/// \param FSet2 The second lockset.
 /// \param JoinLoc The location of the join point for error reporting
-/// \param EntryLEK The warning if a mutex is missing from \p EntrySet.
-/// \param ExitLEK The warning if a mutex is missing from \p ExitSet.
-void ThreadSafetyAnalyzer::intersectAndWarn(FactSet &EntrySet,
-                                            const FactSet &ExitSet,
+/// \param LEK1 The error message to report if a mutex is missing from LSet1
+/// \param LEK2 The error message to report if a mutex is missing from Lset2
+void ThreadSafetyAnalyzer::intersectAndWarn(FactSet &FSet1,
+                                            const FactSet &FSet2,
                                             SourceLocation JoinLoc,
-                                            LockErrorKind EntryLEK,
-                                            LockErrorKind ExitLEK) {
-  FactSet EntrySetOrig = EntrySet;
+                                            LockErrorKind LEK1,
+                                            LockErrorKind LEK2) {
+  FactSet FSet1Orig = FSet1;
 
-  // Find locks in ExitSet that conflict or are not in EntrySet, and warn.
-  for (const auto &Fact : ExitSet) {
-    const FactEntry &ExitFact = FactMan[Fact];
+  // Find locks in FSet2 that conflict or are not in FSet1, and warn.
+  for (const auto &Fact : FSet2) {
+    const FactEntry &LDat2 = FactMan[Fact];
 
-    FactSet::iterator EntryIt = EntrySet.findLockIter(FactMan, ExitFact);
-    if (EntryIt != EntrySet.end()) {
-      if (join(FactMan[*EntryIt], ExitFact,
-               EntryLEK != LEK_LockedSomeLoopIterations))
-        *EntryIt = Fact;
-    } else if (!ExitFact.managed()) {
-      ExitFact.handleRemovalFromIntersection(ExitSet, FactMan, JoinLoc,
-                                             EntryLEK, Handler);
+    FactSet::iterator Iter1 = FSet1.findLockIter(FactMan, LDat2);
+    if (Iter1 != FSet1.end()) {
+      if (join(FactMan[*Iter1], LDat2) && LEK1 == LEK_LockedSomePredecessors)
+        *Iter1 = Fact;
+    } else {
+      LDat2.handleRemovalFromIntersection(FSet2, FactMan, JoinLoc, LEK1,
+                                          Handler);
     }
   }
 
-  // Find locks in EntrySet that are not in ExitSet, and remove them.
-  for (const auto &Fact : EntrySetOrig) {
-    const FactEntry *EntryFact = &FactMan[Fact];
-    const FactEntry *ExitFact = ExitSet.findLock(FactMan, *EntryFact);
+  // Find locks in FSet1 that are not in FSet2, and remove them.
+  for (const auto &Fact : FSet1Orig) {
+    const FactEntry *LDat1 = &FactMan[Fact];
+    const FactEntry *LDat2 = FSet2.findLock(FactMan, *LDat1);
 
-    if (!ExitFact) {
-      if (!EntryFact->managed() || ExitLEK == LEK_LockedSomeLoopIterations)
-        EntryFact->handleRemovalFromIntersection(EntrySetOrig, FactMan, JoinLoc,
-                                                 ExitLEK, Handler);
-      if (ExitLEK == LEK_LockedSomePredecessors)
-        EntrySet.removeLock(FactMan, *EntryFact);
+    if (!LDat2) {
+      LDat1->handleRemovalFromIntersection(FSet1Orig, FactMan, JoinLoc, LEK2,
+                                           Handler);
+      if (LEK2 == LEK_LockedSomePredecessors)
+        FSet1.removeLock(FactMan, *LDat1);
     }
   }
 }
@@ -2533,7 +2528,7 @@ void ThreadSafetyAnalyzer::runAnalysis(AnalysisDeclContext &AC) {
       CFGBlock *FirstLoopBlock = *SI;
       CFGBlockInfo *PreLoop = &BlockInfo[FirstLoopBlock->getBlockID()];
       CFGBlockInfo *LoopEnd = &BlockInfo[CurrBlockID];
-      intersectAndWarn(PreLoop->EntrySet, LoopEnd->ExitSet, PreLoop->EntryLoc,
+      intersectAndWarn(LoopEnd->ExitSet, PreLoop->EntrySet, PreLoop->EntryLoc,
                        LEK_LockedSomeLoopIterations);
     }
   }

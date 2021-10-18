@@ -1013,8 +1013,8 @@ static void forConstantArrayExpansion(CodeGenFunction &CGF,
     BaseAddr.getAlignment().alignmentOfArrayElement(EltSize);
 
   for (int i = 0, n = CAE->NumElts; i < n; i++) {
-    llvm::Value *EltAddr = CGF.Builder.CreateConstGEP2_32(
-        BaseAddr.getElementType(), BaseAddr.getPointer(), 0, i);
+    llvm::Value *EltAddr =
+      CGF.Builder.CreateConstGEP2_32(nullptr, BaseAddr.getPointer(), 0, i);
     Fn(Address(EltAddr, EltAlign));
   }
 }
@@ -1838,6 +1838,14 @@ void CodeGenModule::getDefaultFunctionAttributes(StringRef Name,
       FuncAttrs.addAttribute("stackrealign");
     if (CodeGenOpts.Backchain)
       FuncAttrs.addAttribute("backchain");
+    if (CodeGenOpts.PointerAuth.ReturnAddresses)
+      FuncAttrs.addAttribute("ptrauth-returns");
+    if (CodeGenOpts.PointerAuth.FunctionPointers)
+      FuncAttrs.addAttribute("ptrauth-calls");
+    if (CodeGenOpts.PointerAuth.IndirectGotos)
+      FuncAttrs.addAttribute("ptrauth-indirect-gotos");
+    if (CodeGenOpts.PointerAuth.AuthTraps)
+      FuncAttrs.addAttribute("ptrauth-auth-traps");
     if (CodeGenOpts.EnableSegmentedStacks)
       FuncAttrs.addAttribute("split-stack");
 
@@ -2174,9 +2182,8 @@ void CodeGenModule::ConstructAttributeList(StringRef Name,
   // Add "sample-profile-suffix-elision-policy" attribute for internal linkage
   // functions with -funique-internal-linkage-names.
   if (TargetDecl && CodeGenOpts.UniqueInternalLinkageNames) {
-    if (isa<FunctionDecl>(TargetDecl)) {
-      if (this->getFunctionLinkage(CalleeInfo.getCalleeDecl()) ==
-          llvm::GlobalValue::InternalLinkage)
+    if (auto *Fn = dyn_cast<FunctionDecl>(TargetDecl)) {
+      if (this->getFunctionLinkage(Fn) == llvm::GlobalValue::InternalLinkage)
         FuncAttrs.addAttribute("sample-profile-suffix-elision-policy",
                                "selected");
     }
@@ -3438,8 +3445,7 @@ void CodeGenFunction::EmitFunctionEpilog(const CGFunctionInfo &FI,
       --EI;
       llvm::Value *ArgStruct = &*EI;
       llvm::Value *SRet = Builder.CreateStructGEP(
-          EI->getType()->getPointerElementType(), ArgStruct,
-          RetAI.getInAllocaFieldIndex());
+          nullptr, ArgStruct, RetAI.getInAllocaFieldIndex());
       llvm::Type *Ty =
           cast<llvm::GetElementPtrInst>(SRet)->getResultElementType();
       RV = Builder.CreateAlignedLoad(Ty, SRet, getPointerAlign(), "sret");
@@ -4327,7 +4333,8 @@ void CodeGenFunction::EmitCallArg(CallArgList &args, const Expr *E,
   }
 
   if (HasAggregateEvalKind && isa<ImplicitCastExpr>(E) &&
-      cast<CastExpr>(E)->getCastKind() == CK_LValueToRValue) {
+      cast<CastExpr>(E)->getCastKind() == CK_LValueToRValue &&
+      !type.isNonTrivialToPrimitiveCopy()) {
     LValue L = EmitLValue(cast<CastExpr>(E)->getSubExpr());
     assert(L.isSimple());
     args.addUncopiedAggregate(L, type);
@@ -4600,7 +4607,8 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
                                  ReturnValueSlot ReturnValue,
                                  const CallArgList &CallArgs,
                                  llvm::CallBase **callOrInvoke, bool IsMustTail,
-                                 SourceLocation Loc) {
+                                 SourceLocation Loc,
+                                 bool IsVirtualFunctionPointerThunk) {
   // FIXME: We no longer need the types from CallArgs; lift up and simplify.
 
   assert(Callee.isOrdinary() || Callee.isVirtual());
@@ -4681,7 +4689,10 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   Address SRetAlloca = Address::invalid();
   llvm::Value *UnusedReturnSizePtr = nullptr;
   if (RetAI.isIndirect() || RetAI.isInAlloca() || RetAI.isCoerceAndExpand()) {
-    if (!ReturnValue.isNull()) {
+    if (IsVirtualFunctionPointerThunk && RetAI.isIndirect()) {
+      SRetPtr = Address(CurFn->arg_begin() + IRFunctionArgs.getSRetArgNo(),
+                        CharUnits::fromQuantity(1));
+    } else if (!ReturnValue.isNull()) {
       SRetPtr = ReturnValue.getValue();
     } else {
       SRetPtr = CreateMemTemp(RetTy, "tmp", &SRetAlloca);
@@ -5229,6 +5240,9 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   SmallVector<llvm::OperandBundleDef, 1> BundleList =
       getBundlesForFunclet(CalleePtr);
 
+  // Add the pointer-authentication bundle.
+  EmitPointerAuthOperandBundle(ConcreteCallee.getPointerAuthInfo(), BundleList);
+
   if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(CurFuncDecl))
     if (FD->hasAttr<StrictFPAttr>())
       // All calls within a strictfp function are marked strictfp
@@ -5293,10 +5307,13 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   if (CGM.getLangOpts().ObjCAutoRefCount)
     AddObjCARCExceptionMetadata(CI);
 
-  // Set tail call kind if necessary.
+  // Adjust tail call behavior based on TargetDecl's attributes and CallInfo.
   if (llvm::CallInst *Call = dyn_cast<llvm::CallInst>(CI)) {
     if (TargetDecl && TargetDecl->hasAttr<NotTailCalledAttr>())
       Call->setTailCallKind(llvm::CallInst::TCK_NoTail);
+    else if (CallInfo.getASTCallingConvention() == CC_SwiftAsync &&
+             CurFnInfo->getASTCallingConvention() == CC_SwiftAsync)
+      Call->setTailCallKind(llvm::CallInst::TCK_Tail);
     else if (IsMustTail)
       Call->setTailCallKind(llvm::CallInst::TCK_MustTail);
   }
@@ -5384,7 +5401,14 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   CallArgs.freeArgumentMemory(*this);
 
   // Extract the return value.
-  RValue Ret = [&] {
+  RValue Ret;
+
+  // If the current function is a virtual function pointer thunk, avoid copying
+  // the return value of the musttail call to a temporary.
+  if (IsVirtualFunctionPointerThunk)
+    Ret = RValue::get(CI);
+  else
+    Ret = [&] {
     switch (RetAI.getKind()) {
     case ABIArgInfo::CoerceAndExpand: {
       auto coercionType = RetAI.getCoerceAndExpandType();

@@ -607,13 +607,15 @@ void DeclPrinter::VisitFunctionDecl(FunctionDecl *D) {
   CXXConversionDecl *ConversionDecl = dyn_cast<CXXConversionDecl>(D);
   CXXDeductionGuideDecl *GuideDecl = dyn_cast<CXXDeductionGuideDecl>(D);
   if (!Policy.SuppressSpecifiers) {
-    switch (D->getStorageClass()) {
-    case SC_None: break;
-    case SC_Extern: Out << "extern "; break;
-    case SC_Static: Out << "static "; break;
-    case SC_PrivateExtern: Out << "__private_extern__ "; break;
-    case SC_Auto: case SC_Register:
-      llvm_unreachable("invalid for functions");
+    if (!Policy.SupressStorageClassSpecifiers) {
+      switch (D->getStorageClass()) {
+      case SC_None: break;
+      case SC_Extern: Out << "extern "; break;
+      case SC_Static: Out << "static "; break;
+      case SC_PrivateExtern: Out << "__private_extern__ "; break;
+      case SC_Auto: case SC_Register:
+        llvm_unreachable("invalid for functions");
+      }
     }
 
     if (D->isInlineSpecified())  Out << "inline ";
@@ -1146,6 +1148,7 @@ void DeclPrinter::VisitTemplateDecl(const TemplateDecl *D) {
     Out << "concept " << Concept->getName() << " = " ;
     Concept->getConstraintExpr()->printPretty(Out, nullptr, Policy, Indentation,
                                               "\n", &Context);
+    Out << ";";
   }
 }
 
@@ -1357,6 +1360,9 @@ void DeclPrinter::VisitObjCInterfaceDecl(ObjCInterfaceDecl *OID) {
     return;
   }
   bool eolnOut = false;
+  prettyPrintAttributes(OID);
+  if (OID->hasAttrs()) Out << "\n";
+
   Out << "@interface " << I;
 
   if (auto TypeParams = OID->getTypeParamListAsWritten()) {

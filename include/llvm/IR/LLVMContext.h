@@ -93,7 +93,8 @@ public:
     OB_cfguardtarget = 3,          // "cfguardtarget"
     OB_preallocated = 4,           // "preallocated"
     OB_gc_live = 5,                // "gc-live"
-    OB_clang_arc_attachedcall = 6, // "clang.arc.attachedcall"
+    OB_ptrauth = 6,                // "ptrauth"
+    OB_clang_arc_attachedcall = 7, // "clang.arc.attachedcall"
   };
 
   /// getMDKindID - Return a unique non-zero ID for the specified metadata kind.
@@ -290,7 +291,7 @@ public:
   /// be prepared to drop the erroneous construct on the floor and "not crash".
   /// The generated code need not be correct.  The error message will be
   /// implicitly prefixed with "error: " and should not end with a ".".
-  void emitError(uint64_t LocCookie, const Twine &ErrorStr);
+  void emitError(unsigned LocCookie, const Twine &ErrorStr);
   void emitError(const Instruction *I, const Twine &ErrorStr);
   void emitError(const Twine &ErrorStr);
 
@@ -304,9 +305,6 @@ public:
   /// The lifetime of the object must be guaranteed to extend as long as the
   /// LLVMContext is used by compilation.
   void setOptPassGate(OptPassGate&);
-
-  /// Whether typed pointers are supported. If false, all pointers are opaque.
-  bool supportsTypedPointers() const;
 
 private:
   // Module needs access to the add/removeModule methods.

@@ -19,7 +19,6 @@
 #include "clang/AST/CommentCommandTraits.h"
 #include "clang/AST/CommentVisitor.h"
 #include "clang/AST/DeclVisitor.h"
-#include "clang/AST/ExprConcepts.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/AST/TemplateArgumentVisitor.h"
@@ -189,8 +188,6 @@ public:
 
   void Visit(const GenericSelectionExpr::ConstAssociation &A);
 
-  void Visit(const concepts::Requirement *R);
-
   void Visit(const APValue &Value, QualType Ty);
 
   void dumpPointer(const void *Ptr);
@@ -299,7 +296,6 @@ public:
   void VisitObjCBoolLiteralExpr(const ObjCBoolLiteralExpr *Node);
   void VisitOMPIteratorExpr(const OMPIteratorExpr *Node);
   void VisitConceptSpecializationExpr(const ConceptSpecializationExpr *Node);
-  void VisitRequiresExpr(const RequiresExpr *Node);
 
   void VisitRValueReferenceType(const ReferenceType *T);
   void VisitArrayType(const ArrayType *T);

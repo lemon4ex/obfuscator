@@ -111,7 +111,7 @@ MacroExpansionContext::getExpandedText(SourceLocation MacroExpansionLoc) const {
     return StringRef{""};
 
   // Otherwise we have the actual token sequence as string.
-  return It->getSecond().str();
+  return StringRef{It->getSecond()};
 }
 
 Optional<StringRef>

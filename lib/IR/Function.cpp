@@ -601,6 +601,12 @@ void Function::removeParamAttrs(unsigned ArgNo, const AttrBuilder &Attrs) {
   setAttributes(PAL);
 }
 
+void Function::removeParamUndefImplyingAttrs(unsigned ArgNo) {
+  AttributeList PAL = getAttributes();
+  PAL = PAL.removeParamUndefImplyingAttributes(getContext(), ArgNo);
+  setAttributes(PAL);
+}
+
 void Function::addDereferenceableAttr(unsigned i, uint64_t Bytes) {
   AttributeList PAL = getAttributes();
   PAL = PAL.addDereferenceableAttr(getContext(), i, Bytes);
@@ -1398,21 +1404,9 @@ static bool matchIntrinsicType(
     }
     case IITDescriptor::Pointer: {
       PointerType *PT = dyn_cast<PointerType>(Ty);
-      if (!PT || PT->getAddressSpace() != D.Pointer_AddressSpace)
-        return true;
-      if (!PT->isOpaque())
-        return matchIntrinsicType(PT->getElementType(), Infos, ArgTys,
-                                  DeferredChecks, IsDeferredCheck);
-      // If typed pointers are supported, do not allow using opaque pointer in
-      // place of fixed pointer type. This would make the intrinsic signature
-      // non-unique.
-      if (Ty->getContext().supportsTypedPointers())
-        return true;
-      // Consume IIT descriptors relating to the pointer element type.
-      while (Infos.front().Kind == IITDescriptor::Pointer)
-        Infos = Infos.slice(1);
-      Infos = Infos.slice(1);
-      return false;
+      return !PT || PT->getAddressSpace() != D.Pointer_AddressSpace ||
+             matchIntrinsicType(PT->getElementType(), Infos, ArgTys,
+                                DeferredChecks, IsDeferredCheck);
     }
 
     case IITDescriptor::Struct: {
@@ -1523,13 +1517,8 @@ static bool matchIntrinsicType(
         dyn_cast<VectorType> (ArgTys[D.getArgumentNumber()]);
       PointerType *ThisArgType = dyn_cast<PointerType>(Ty);
 
-      if (!ThisArgType || !ReferenceType)
-        return true;
-      if (!ThisArgType->isOpaque())
-        return ThisArgType->getElementType() != ReferenceType->getElementType();
-      // If typed pointers are supported, do not allow opaque pointer to ensure
-      // uniqueness.
-      return Ty->getContext().supportsTypedPointers();
+      return (!ThisArgType || !ReferenceType ||
+              ThisArgType->getElementType() != ReferenceType->getElementType());
     }
     case IITDescriptor::VecOfAnyPtrsToElt: {
       unsigned RefArgNumber = D.getRefArgNumber();
@@ -1560,8 +1549,7 @@ static bool matchIntrinsicType(
           dyn_cast<PointerType>(ThisArgVecTy->getElementType());
       if (!ThisArgEltTy)
         return true;
-      return !ThisArgEltTy->isOpaqueOrPointeeTypeMatches(
-          ReferenceType->getElementType());
+      return ThisArgEltTy->getElementType() != ReferenceType->getElementType();
     }
     case IITDescriptor::VecElementArgument: {
       if (D.getArgumentNumber() >= ArgTys.size())
@@ -1670,26 +1658,11 @@ Optional<Function *> Intrinsic::remangleIntrinsicFunction(Function *F) {
 
   Intrinsic::ID ID = F->getIntrinsicID();
   StringRef Name = F->getName();
-  std::string WantedName =
-      Intrinsic::getName(ID, ArgTys, F->getParent(), F->getFunctionType());
-  if (Name == WantedName)
+  if (Name ==
+      Intrinsic::getName(ID, ArgTys, F->getParent(), F->getFunctionType()))
     return None;
 
-  Function *NewDecl = [&] {
-    if (auto *ExistingGV = F->getParent()->getNamedValue(WantedName)) {
-      if (auto *ExistingF = dyn_cast<Function>(ExistingGV))
-        if (ExistingF->getFunctionType() == F->getFunctionType())
-          return ExistingF;
-
-      // The name already exists, but is not a function or has the wrong
-      // prototype. Make place for the new one by renaming the old version.
-      // Either this old version will be removed later on or the module is
-      // invalid and we'll get an error.
-      ExistingGV->setName(WantedName + ".renamed");
-    }
-    return Intrinsic::getDeclaration(F->getParent(), ID, ArgTys);
-  }();
-
+  auto NewDecl = Intrinsic::getDeclaration(F->getParent(), ID, ArgTys);
   NewDecl->setCallingConv(F->getCallingConv());
   assert(NewDecl->getFunctionType() == F->getFunctionType() &&
          "Shouldn't change the signature");

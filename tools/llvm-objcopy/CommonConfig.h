@@ -10,7 +10,6 @@
 #define LLVM_TOOLS_LLVM_OBJCOPY_COMMONCONFIG_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/CachedHashString.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/SmallVector.h"
@@ -114,11 +113,6 @@ public:
          llvm::function_ref<Error(Error)> ErrorCallback);
 
   bool isPositiveMatch() const { return IsPositiveMatch; }
-  Optional<StringRef> getName() const {
-    if (!R && !G)
-      return Name;
-    return None;
-  }
   bool operator==(StringRef S) const {
     return R ? R->match(S) : G ? G->match(S) : Name == S;
   }
@@ -128,32 +122,23 @@ public:
 // Matcher that checks symbol or section names against the command line flags
 // provided for that option.
 class NameMatcher {
-  DenseSet<CachedHashStringRef> PosNames;
-  std::vector<NameOrPattern> PosPatterns;
+  std::vector<NameOrPattern> PosMatchers;
   std::vector<NameOrPattern> NegMatchers;
 
 public:
   Error addMatcher(Expected<NameOrPattern> Matcher) {
     if (!Matcher)
       return Matcher.takeError();
-    if (Matcher->isPositiveMatch()) {
-      if (Optional<StringRef> MaybeName = Matcher->getName())
-        PosNames.insert(CachedHashStringRef(*MaybeName));
-      else
-        PosPatterns.push_back(std::move(*Matcher));
-    } else {
+    if (Matcher->isPositiveMatch())
+      PosMatchers.push_back(std::move(*Matcher));
+    else
       NegMatchers.push_back(std::move(*Matcher));
-    }
     return Error::success();
   }
   bool matches(StringRef S) const {
-    return (PosNames.contains(CachedHashStringRef(S)) ||
-            is_contained(PosPatterns, S)) &&
-           !is_contained(NegMatchers, S);
+    return is_contained(PosMatchers, S) && !is_contained(NegMatchers, S);
   }
-  bool empty() const {
-    return PosNames.empty() && PosPatterns.empty() && NegMatchers.empty();
-  }
+  bool empty() const { return PosMatchers.empty() && NegMatchers.empty(); }
 };
 
 enum class SymbolFlag {

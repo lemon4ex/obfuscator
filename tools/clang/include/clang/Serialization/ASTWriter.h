@@ -347,7 +347,7 @@ private:
     union {
       const Decl *Dcl;
       void *Type;
-      SourceLocation::UIntTy Loc;
+      unsigned Loc;
       unsigned Val;
       Module *Mod;
       const Attr *Attribute;

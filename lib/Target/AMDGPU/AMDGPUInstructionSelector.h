@@ -109,7 +109,6 @@ private:
   bool selectG_PTR_ADD(MachineInstr &I) const;
   bool selectG_IMPLICIT_DEF(MachineInstr &I) const;
   bool selectG_INSERT(MachineInstr &I) const;
-  bool selectG_SBFX_UBFX(MachineInstr &I) const;
 
   bool selectInterpP1F16(MachineInstr &MI) const;
   bool selectWritelane(MachineInstr &MI) const;

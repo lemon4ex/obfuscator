@@ -34,10 +34,9 @@
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/StmtOpenMP.h"
 #include "clang/AST/TypeLoc.h"
+#include "clang/APINotes/APINotesManager.h"
 #include "clang/AST/TypeOrdering.h"
 #include "clang/Basic/BitmaskEnum.h"
-#include "clang/Basic/Builtins.h"
-#include "clang/Basic/DarwinSDKInfo.h"
 #include "clang/Basic/ExpressionTraits.h"
 #include "clang/Basic/Module.h"
 #include "clang/Basic/OpenCLOptions.h"
@@ -67,6 +66,7 @@
 #include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/Frontend/OpenMP/OMPConstants.h"
 #include <deque>
+#include <functional>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -412,6 +412,7 @@ public:
   ASTConsumer &Consumer;
   DiagnosticsEngine &Diags;
   SourceManager &SourceMgr;
+  api_notes::APINotesManager APINotes;
 
   /// Flag indicating whether or not to collect detailed statistics.
   bool CollectStats;
@@ -914,6 +915,10 @@ public:
     OpaqueParser = P;
   }
 
+  /// \brief Callback to the parser to parse a type expressed as a string.
+  std::function<TypeResult(StringRef, StringRef, SourceLocation)>
+    ParseTypeFromStringCallback;
+
   // Does the work necessary to deal with a SYCL kernel lambda. At the moment,
   // this just marks the list of lambdas required to name the kernel.
   void AddSYCLKernelLambda(const FunctionDecl *FD);
@@ -1378,7 +1383,7 @@ public:
   /// initializers for tentative definitions in C) once parsing has
   /// completed. Modules and precompiled headers perform different kinds of
   /// checks.
-  const TranslationUnitKind TUKind;
+  TranslationUnitKind TUKind;
 
   llvm::BumpPtrAllocator BumpAlloc;
 
@@ -1526,8 +1531,6 @@ public:
   /// assignment.
   llvm::DenseMap<const VarDecl *, int> RefsMinusAssignments;
 
-  Optional<std::unique_ptr<DarwinSDKInfo>> CachedDarwinSDKInfo;
-
 public:
   Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
        TranslationUnitKind TUKind = TU_Complete,
@@ -1556,8 +1559,6 @@ public:
   ASTConsumer &getASTConsumer() const { return Consumer; }
   ASTMutationListener *getASTMutationListener() const;
   ExternalSemaSource* getExternalSource() const { return ExternalSource; }
-  DarwinSDKInfo *getDarwinSDKInfoForAvailabilityChecking(SourceLocation Loc,
-                                                         StringRef Platform);
 
   ///Registers an external source. If an external source already exists,
   /// creates a multiplex external source and appends to it.
@@ -2649,6 +2650,9 @@ public:
                             SourceLocation AtomicQualLoc = SourceLocation(),
                             SourceLocation UnalignedQualLoc = SourceLocation());
 
+  void diagnosePointerAuthDisabled(SourceLocation loc, SourceRange range);
+  bool checkConstantPointerAuthKey(Expr *keyExpr, unsigned &key);
+
   static bool adjustContextForLocalExternDecl(DeclContext *&DC);
   void DiagnoseFunctionSpecifiers(const DeclSpec &DS);
   NamedDecl *getShadowedDeclaration(const TypedefNameDecl *D,
@@ -2739,6 +2743,9 @@ public:
   ParmVarDecl *BuildParmVarDeclForTypedef(DeclContext *DC,
                                           SourceLocation Loc,
                                           QualType T);
+  QualType adjustParameterTypeForObjCAutoRefCount(QualType T,
+                                                  SourceLocation NameLoc,
+                                                  TypeSourceInfo *TSInfo);
   ParmVarDecl *CheckParameter(DeclContext *DC, SourceLocation StartLoc,
                               SourceLocation NameLoc, IdentifierInfo *Name,
                               QualType T, TypeSourceInfo *TSInfo,
@@ -3508,6 +3515,7 @@ public:
     CCEK_Enumerator,  ///< Enumerator value with fixed underlying type.
     CCEK_TemplateArg, ///< Value of a non-type template parameter.
     CCEK_ArrayBound,  ///< Array bound in array declarator or new-expression.
+    CCEK_ConstexprIf, ///< Condition in a constexpr if statement.
     CCEK_ExplicitBool ///< Condition in an explicit(bool) specifier.
   };
   ExprResult CheckConvertedConstantExpression(Expr *From, QualType T,
@@ -4303,6 +4311,12 @@ public:
   bool checkCommonAttributeFeatures(const Decl *D, const ParsedAttr &A);
   bool checkCommonAttributeFeatures(const Stmt *S, const ParsedAttr &A);
 
+  /// Map any API notes provided for this declaration to attributes on the
+  /// declaration.
+  ///
+  /// Triggered by declaration-attribute processing.
+  void ProcessAPINotes(Decl *D);
+
   /// Determine if type T is a valid subject for a nonnull and similar
   /// attributes. By default, we look through references (the behavior used by
   /// nonnull), but if the second parameter is true, then we treat a reference
@@ -4340,6 +4354,29 @@ public:
   /// Get the outermost AttributedType node that sets a calling convention.
   /// Valid types should not have multiple attributes with different CCs.
   const AttributedType *getCallingConvAttributedType(QualType T) const;
+
+  /// Check whether a nullability type specifier can be added to the given
+  /// type through some means not written in source (e.g. API notes).
+  ///
+  /// \param type The type to which the nullability specifier will be
+  /// added. On success, this type will be updated appropriately.
+  ///
+  /// \param nullability The nullability specifier to add.
+  ///
+  /// \param diagLoc The location to use for diagnostics.
+  ///
+  /// \param allowArrayTypes Whether to accept nullability specifiers on an
+  /// array type (e.g., because it will decay to a pointer).
+  ///
+  /// \param overrideExisting Whether to override an existing, locally-specified
+  /// nullability specifier rather than complaining about the conflict.
+  ///
+  /// \returns true if nullability cannot be applied, false otherwise.
+  bool checkImplicitNullabilityTypeSpecifier(QualType &type,
+                                             NullabilityKind nullability,
+                                             SourceLocation diagLoc,
+                                             bool allowArrayTypes,
+                                             bool overrideExisting);
 
   /// Process the attributes before creating an attributed statement. Returns
   /// the semantic attributes that have been processed.
@@ -4785,24 +4822,21 @@ public:
     bool isMoveEligible() const { return S != None; };
     bool isCopyElidable() const { return S == MoveEligibleAndCopyElidable; }
   };
-  enum class SimplerImplicitMoveMode { ForceOff, Normal, ForceOn };
-  NamedReturnInfo getNamedReturnInfo(
-      Expr *&E, SimplerImplicitMoveMode Mode = SimplerImplicitMoveMode::Normal);
-  NamedReturnInfo getNamedReturnInfo(const VarDecl *VD);
+  NamedReturnInfo getNamedReturnInfo(Expr *&E, bool ForceCXX2b = false);
+  NamedReturnInfo getNamedReturnInfo(const VarDecl *VD,
+                                     bool ForceCXX20 = false);
   const VarDecl *getCopyElisionCandidate(NamedReturnInfo &Info,
                                          QualType ReturnType);
 
-  ExprResult
-  PerformMoveOrCopyInitialization(const InitializedEntity &Entity,
-                                  const NamedReturnInfo &NRInfo, Expr *Value,
-                                  bool SupressSimplerImplicitMoves = false);
+  ExprResult PerformMoveOrCopyInitialization(const InitializedEntity &Entity,
+                                             const NamedReturnInfo &NRInfo,
+                                             Expr *Value);
 
   StmtResult ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
                              Scope *CurScope);
   StmtResult BuildReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp);
   StmtResult ActOnCapScopeReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
-                                     NamedReturnInfo &NRInfo,
-                                     bool SupressSimplerImplicitMoves);
+                                     NamedReturnInfo &NRInfo);
 
   StmtResult ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
                              bool IsVolatile, unsigned NumOutputs,
@@ -5432,8 +5466,6 @@ public:
                            Expr *ExecConfig = nullptr,
                            bool IsExecConfig = false,
                            bool AllowRecovery = false);
-  Expr *BuildBuiltinCallExpr(SourceLocation Loc, Builtin::ID Id,
-                             MultiExprArg CallArgs);
   enum class AtomicArgumentOrder { API, AST };
   ExprResult
   BuildAtomicExpr(SourceRange CallRange, SourceRange ExprRange,
@@ -6098,12 +6130,6 @@ public:
   // Checks that reinterpret casts don't have undefined behavior.
   void CheckCompatibleReinterpretCast(QualType SrcType, QualType DestType,
                                       bool IsDereference, SourceRange Range);
-
-  // Checks that the vector type should be initialized from a scalar
-  // by splatting the value rather than populating a single element.
-  // This is the case for AltiVecVector types as well as with
-  // AltiVecPixel and AltiVecBool when -faltivec-src-compat=xl is specified.
-  bool ShouldSplatAltivecScalarInCast(const VectorType *VecTy);
 
   /// ActOnCXXNamedCast - Parse
   /// {dynamic,static,reinterpret,const,addrspace}_cast's.
@@ -7828,7 +7854,8 @@ public:
                                  TemplateArgumentLoc &Arg,
                            SmallVectorImpl<TemplateArgument> &Converted);
 
-  bool CheckTemplateArgument(TypeSourceInfo *Arg);
+  bool CheckTemplateArgument(TemplateTypeParmDecl *Param,
+                             TypeSourceInfo *Arg);
   ExprResult CheckTemplateArgument(NonTypeTemplateParmDecl *Param,
                                    QualType InstantiatedParamType, Expr *Arg,
                                    TemplateArgument &Converted,
@@ -9911,6 +9938,12 @@ public:
     RTC_Incompatible,
     RTC_Unknown
   };
+
+  /// Check whether the declared result type of the given Objective-C
+  /// method declaration is compatible with the method's class.
+  ResultTypeCompatibilityKind
+  checkRelatedResultTypeCompatibility(const ObjCMethodDecl *Method,
+                                      const ObjCInterfaceDecl *CurrentClass);
 
   void CheckObjCMethodDirectOverrides(ObjCMethodDecl *method,
                                       ObjCMethodDecl *overridden);
@@ -12587,7 +12620,6 @@ private:
   bool SemaBuiltinComplex(CallExpr *TheCall);
   bool SemaBuiltinVSX(CallExpr *TheCall);
   bool SemaBuiltinOSLogFormat(CallExpr *TheCall);
-  bool SemaValueIsRunOfOnes(CallExpr *TheCall, unsigned ArgNum);
 
 public:
   // Used by C++ template instantiation.
@@ -12599,7 +12631,6 @@ public:
 private:
   bool SemaBuiltinPrefetch(CallExpr *TheCall);
   bool SemaBuiltinAllocaWithAlign(CallExpr *TheCall);
-  bool SemaBuiltinArithmeticFence(CallExpr *TheCall);
   bool SemaBuiltinAssume(CallExpr *TheCall);
   bool SemaBuiltinAssumeAligned(CallExpr *TheCall);
   bool SemaBuiltinLongjmp(CallExpr *TheCall);

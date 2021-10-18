@@ -110,7 +110,7 @@ struct LegalityQuery {
   ArrayRef<LLT> Types;
 
   struct MemDesc {
-    LLT MemoryTy;
+    uint64_t SizeInBits;
     uint64_t AlignInBits;
     AtomicOrdering Ordering;
   };
@@ -196,12 +196,13 @@ namespace LegalityPredicates {
 struct TypePairAndMemDesc {
   LLT Type0;
   LLT Type1;
-  LLT MemTy;
+  uint64_t MemSize;
   uint64_t Align;
 
   bool operator==(const TypePairAndMemDesc &Other) const {
     return Type0 == Other.Type0 && Type1 == Other.Type1 &&
-           Align == Other.Align && MemTy == Other.MemTy;
+           Align == Other.Align &&
+           MemSize == Other.MemSize;
   }
 
   /// \returns true if this memory access is legal with for the access described
@@ -209,9 +210,7 @@ struct TypePairAndMemDesc {
   bool isCompatible(const TypePairAndMemDesc &Other) const {
     return Type0 == Other.Type0 && Type1 == Other.Type1 &&
            Align >= Other.Align &&
-           // FIXME: This perhaps should be stricter, but the current legality
-           // rules are written only considering the size.
-           MemTy.getSizeInBits() == Other.MemTy.getSizeInBits();
+           MemSize == Other.MemSize;
   }
 };
 

@@ -14,9 +14,8 @@
 #ifndef LLVM_UNITTESTS_EXECUTIONENGINE_ORC_ORCTESTCOMMON_H
 #define LLVM_UNITTESTS_EXECUTIONENGINE_ORC_ORCTESTCOMMON_H
 
+#include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/JITSymbol.h"
-#include "llvm/ExecutionEngine/Orc/Core.h"
-#include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
 #include "llvm/ExecutionEngine/Orc/IndirectionUtils.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -53,7 +52,7 @@ public:
 
 protected:
   std::shared_ptr<SymbolStringPool> SSP = std::make_shared<SymbolStringPool>();
-  ExecutionSession ES{std::make_unique<UnsupportedExecutorProcessControl>(SSP)};
+  ExecutionSession ES{SSP};
   JITDylib &JD = ES.createBareJITDylib("JD");
   SymbolStringPtr Foo = ES.intern("foo");
   SymbolStringPtr Bar = ES.intern("bar");

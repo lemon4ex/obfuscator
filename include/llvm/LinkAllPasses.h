@@ -174,7 +174,6 @@ namespace {
       (void) llvm::createStripDeadPrototypesPass();
       (void) llvm::createTailCallEliminationPass();
       (void) llvm::createJumpThreadingPass();
-      (void) llvm::createDFAJumpThreadingPass();
       (void) llvm::createUnifyFunctionExitNodesPass();
       (void) llvm::createInstCountPass();
       (void) llvm::createConstantHoistingPass();
@@ -217,6 +216,7 @@ namespace {
       (void) llvm::createPartiallyInlineLibCallsPass();
       (void) llvm::createScalarizerPass();
       (void) llvm::createSeparateConstOffsetFromGEPPass();
+      (void) llvm::createSoftPointerAuthPass();
       (void) llvm::createSpeculativeExecutionPass();
       (void) llvm::createSpeculativeExecutionIfHasBranchDivergencePass();
       (void) llvm::createRewriteSymbolsPass();

@@ -506,14 +506,15 @@ RCParser::ParseType RCParser::parseUserDefinedResource(IntOrString Type) {
   RETURN_IF_ERROR(consumeType(Kind::BlockBegin));
   std::vector<IntOrString> Data;
 
+  // Consume comma before each consecutive token except the first one.
+  bool ConsumeComma = false;
   while (!consumeOptionalType(Kind::BlockEnd)) {
+    if (ConsumeComma)
+      RETURN_IF_ERROR(consumeType(Kind::Comma));
+    ConsumeComma = true;
+
     ASSIGN_OR_RETURN(Item, readIntOrString());
     Data.push_back(*Item);
-
-    // There can be zero or more commas after each token (but not before
-    // the first one).
-    while (consumeOptionalType(Kind::Comma)) {
-    }
   }
 
   return std::make_unique<UserDefinedResource>(Type, std::move(Data),

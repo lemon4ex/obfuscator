@@ -356,7 +356,7 @@ NestedNameSpecifierLoc::getLocalDataLength(NestedNameSpecifier *Qualifier) {
   assert(Qualifier && "Expected a non-NULL qualifier");
 
   // Location of the trailing '::'.
-  unsigned Length = sizeof(SourceLocation::UIntTy);
+  unsigned Length = sizeof(unsigned);
 
   switch (Qualifier->getKind()) {
   case NestedNameSpecifier::Global:
@@ -368,7 +368,7 @@ NestedNameSpecifierLoc::getLocalDataLength(NestedNameSpecifier *Qualifier) {
   case NestedNameSpecifier::NamespaceAlias:
   case NestedNameSpecifier::Super:
     // The location of the identifier or namespace name.
-    Length += sizeof(SourceLocation::UIntTy);
+    Length += sizeof(unsigned);
     break;
 
   case NestedNameSpecifier::TypeSpecWithTemplate:
@@ -393,8 +393,8 @@ NestedNameSpecifierLoc::getDataLength(NestedNameSpecifier *Qualifier) {
 /// Load a (possibly unaligned) source location from a given address
 /// and offset.
 static SourceLocation LoadSourceLocation(void *Data, unsigned Offset) {
-  SourceLocation::UIntTy Raw;
-  memcpy(&Raw, static_cast<char *>(Data) + Offset, sizeof(Raw));
+  unsigned Raw;
+  memcpy(&Raw, static_cast<char *>(Data) + Offset, sizeof(unsigned));
   return SourceLocation::getFromRawEncoding(Raw);
 }
 
@@ -431,9 +431,8 @@ SourceRange NestedNameSpecifierLoc::getLocalSourceRange() const {
   case NestedNameSpecifier::Namespace:
   case NestedNameSpecifier::NamespaceAlias:
   case NestedNameSpecifier::Super:
-    return SourceRange(
-        LoadSourceLocation(Data, Offset),
-        LoadSourceLocation(Data, Offset + sizeof(SourceLocation::UIntTy)));
+    return SourceRange(LoadSourceLocation(Data, Offset),
+                       LoadSourceLocation(Data, Offset + sizeof(unsigned)));
 
   case NestedNameSpecifier::TypeSpecWithTemplate:
   case NestedNameSpecifier::TypeSpec: {
@@ -488,10 +487,10 @@ static void Append(char *Start, char *End, char *&Buffer, unsigned &BufferSize,
 /// Save a source location to the given buffer.
 static void SaveSourceLocation(SourceLocation Loc, char *&Buffer,
                                unsigned &BufferSize, unsigned &BufferCapacity) {
-  SourceLocation::UIntTy Raw = Loc.getRawEncoding();
+  unsigned Raw = Loc.getRawEncoding();
   Append(reinterpret_cast<char *>(&Raw),
-         reinterpret_cast<char *>(&Raw) + sizeof(Raw), Buffer, BufferSize,
-         BufferCapacity);
+         reinterpret_cast<char *>(&Raw) + sizeof(unsigned),
+         Buffer, BufferSize, BufferCapacity);
 }
 
 /// Save a pointer to the given buffer.
@@ -703,4 +702,35 @@ NestedNameSpecifierLocBuilder::getWithLocInContext(ASTContext &Context) const {
   void *Mem = Context.Allocate(BufferSize, alignof(void *));
   memcpy(Mem, Buffer, BufferSize);
   return NestedNameSpecifierLoc(Representation, Mem);
+}
+
+NestedNameSpecifier *NestedNameSpecifier::getRequiredQualification(
+    ASTContext &Context, const DeclContext *CurContext,
+    const DeclContext *TargetContext) {
+  SmallVector<const DeclContext *, 4> TargetParents;
+
+  for (const DeclContext *CommonAncestor = TargetContext;
+       CommonAncestor && !CommonAncestor->Encloses(CurContext);
+       CommonAncestor = CommonAncestor->getLookupParent()) {
+    if (CommonAncestor->isTransparentContext() ||
+        CommonAncestor->isFunctionOrMethod())
+      continue;
+
+    TargetParents.push_back(CommonAncestor);
+  }
+
+  NestedNameSpecifier *Result = nullptr;
+  while (!TargetParents.empty()) {
+    const DeclContext *Parent = TargetParents.pop_back_val();
+
+    if (const NamespaceDecl *Namespace = dyn_cast<NamespaceDecl>(Parent)) {
+      if (!Namespace->getIdentifier())
+        continue;
+
+      Result = NestedNameSpecifier::Create(Context, Result, Namespace);
+    } else if (const TagDecl *TD = dyn_cast<TagDecl>(Parent))
+      Result = NestedNameSpecifier::Create(
+          Context, Result, false, Context.getTypeDeclType(TD).getTypePtr());
+  }
+  return Result;
 }

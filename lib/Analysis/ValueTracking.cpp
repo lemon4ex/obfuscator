@@ -26,7 +26,6 @@
 #include "llvm/Analysis/AliasAnalysis.h"
 #include "llvm/Analysis/AssumeBundleQueries.h"
 #include "llvm/Analysis/AssumptionCache.h"
-#include "llvm/Analysis/EHPersonalities.h"
 #include "llvm/Analysis/GuardUtils.h"
 #include "llvm/Analysis/InstructionSimplify.h"
 #include "llvm/Analysis/Loads.h"
@@ -5274,22 +5273,6 @@ bool llvm::isGuaranteedToTransferExecutionToSuccessor(const Instruction *I) {
   if (isa<UnreachableInst>(I))
     return false;
 
-  // Note: Do not add new checks here; instead, change Instruction::mayThrow or
-  // Instruction::willReturn.
-  //
-  // FIXME: Move this check into Instruction::willReturn.
-  if (isa<CatchPadInst>(I)) {
-    switch (classifyEHPersonality(I->getFunction()->getPersonalityFn())) {
-    default:
-      // A catchpad may invoke exception object constructors and such, which
-      // in some languages can be arbitrary code, so be conservative by default.
-      return false;
-    case EHPersonality::CoreCLR:
-      // For CoreCLR, it just involves a type test.
-      return true;
-    }
-  }
-
   // An instruction that returns without throwing must transfer control flow
   // to a successor.
   return !I->mayThrow() && I->willReturn();
@@ -6251,16 +6234,6 @@ Intrinsic::ID llvm::getInverseMinMaxIntrinsic(Intrinsic::ID MinMaxID) {
 
 CmpInst::Predicate llvm::getInverseMinMaxPred(SelectPatternFlavor SPF) {
   return getMinMaxPred(getInverseMinMaxFlavor(SPF));
-}
-
-APInt llvm::getMinMaxLimit(SelectPatternFlavor SPF, unsigned BitWidth) {
-  switch (SPF) {
-  case SPF_SMAX: return APInt::getSignedMaxValue(BitWidth);
-  case SPF_SMIN: return APInt::getSignedMinValue(BitWidth);
-  case SPF_UMAX: return APInt::getMaxValue(BitWidth);
-  case SPF_UMIN: return APInt::getMinValue(BitWidth);
-  default: llvm_unreachable("Unexpected flavor");
-  }
 }
 
 std::pair<Intrinsic::ID, bool>

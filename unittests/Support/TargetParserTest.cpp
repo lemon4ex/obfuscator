@@ -987,6 +987,13 @@ INSTANTIATE_TEST_SUITE_P(
                          AArch64::AEK_NONE | AArch64::AEK_CRYPTO |
                              AArch64::AEK_FP | AArch64::AEK_SIMD,
                          "8-A"),
+        ARMCPUTestParams("vortex", "armv8.3-a", "crypto-neon-fp-armv8",
+                         AArch64::AEK_CRC | AArch64::AEK_CRYPTO |
+                             AArch64::AEK_FP | AArch64::AEK_SIMD |
+                             AArch64::AEK_LSE | AArch64::AEK_RAS |
+                             AArch64::AEK_RDM | AArch64::AEK_RCPC |
+                             AArch64::AEK_FP16,
+                         "8.3-A"),
         ARMCPUTestParams("apple-a7", "armv8-a", "crypto-neon-fp-armv8",
                          AArch64::AEK_NONE | AArch64::AEK_CRYPTO |
                              AArch64::AEK_FP | AArch64::AEK_SIMD,
@@ -1164,7 +1171,7 @@ INSTANTIATE_TEST_SUITE_P(
                              AArch64::AEK_LSE | AArch64::AEK_RDM,
                          "8.2-A")));
 
-static constexpr unsigned NumAArch64CPUArchs = 48;
+static constexpr unsigned NumAArch64CPUArchs = 49;
 
 TEST(TargetParserTest, testAArch64CPUArchList) {
   SmallVector<StringRef, NumAArch64CPUArchs> List;
@@ -1360,9 +1367,7 @@ TEST(TargetParserTest, AArch64ExtensionFeatures) {
     AArch64::AEK_SVE,      AArch64::AEK_SVE2,
     AArch64::AEK_SVE2AES,  AArch64::AEK_SVE2SM4,
     AArch64::AEK_SVE2SHA3, AArch64::AEK_SVE2BITPERM,
-    AArch64::AEK_RCPC,     AArch64::AEK_FP16FML,
-    AArch64::AEK_SME,      AArch64::AEK_SMEF64,
-    AArch64::AEK_SMEI64 };
+    AArch64::AEK_RCPC,     AArch64::AEK_FP16FML };
 
   std::vector<StringRef> Features;
 
@@ -1394,9 +1399,6 @@ TEST(TargetParserTest, AArch64ExtensionFeatures) {
   EXPECT_TRUE(llvm::is_contained(Features, "+sve2-sm4"));
   EXPECT_TRUE(llvm::is_contained(Features, "+sve2-sha3"));
   EXPECT_TRUE(llvm::is_contained(Features, "+sve2-bitperm"));
-  EXPECT_TRUE(llvm::is_contained(Features, "+sme"));
-  EXPECT_TRUE(llvm::is_contained(Features, "+sme-f64"));
-  EXPECT_TRUE(llvm::is_contained(Features, "+sme-i64"));
 }
 
 TEST(TargetParserTest, AArch64ArchFeatures) {
@@ -1442,9 +1444,6 @@ TEST(TargetParserTest, AArch64ArchExtFeature) {
                               {"i8mm", "noi8mm", "+i8mm", "-i8mm"},
                               {"f32mm", "nof32mm", "+f32mm", "-f32mm"},
                               {"f64mm", "nof64mm", "+f64mm", "-f64mm"},
-                              {"sme", "nosme", "+sme", "-sme"},
-                              {"sme-f64", "nosme-f64", "+sme-f64", "-sme-f64"},
-                              {"sme-i64", "nosme-i64", "+sme-i64", "-sme-i64"},
 };
 
   for (unsigned i = 0; i < array_lengthof(ArchExt); i++) {

@@ -257,7 +257,7 @@ struct SysReg {
   FeatureBitset FeaturesRequired;
   bool isRV32Only;
 
-  bool haveRequiredFeatures(const FeatureBitset &ActiveFeatures) const {
+  bool haveRequiredFeatures(FeatureBitset ActiveFeatures) const {
     // Not in 32-bit mode.
     if (isRV32Only && ActiveFeatures[RISCV::Feature64Bit])
       return false;

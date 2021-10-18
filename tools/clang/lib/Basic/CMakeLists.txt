@@ -42,7 +42,6 @@ add_clang_library(clangBasic
   CharInfo.cpp
   CodeGenOptions.cpp
   Cuda.cpp
-  DarwinSDKInfo.cpp
   Diagnostic.cpp
   DiagnosticIDs.cpp
   DiagnosticOptions.cpp
@@ -64,6 +63,7 @@ add_clang_library(clangBasic
   Sanitizers.cpp
   SourceLocation.cpp
   SourceManager.cpp
+  SourceMgrAdapter.cpp
   Stack.cpp
   TargetID.cpp
   TargetInfo.cpp

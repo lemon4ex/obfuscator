@@ -710,9 +710,9 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
 
   DidCallStackSave = false;
   CurCodeDecl = D;
-  const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D);
-  if (FD && FD->usesSEHTry())
-    CurSEHParent = FD;
+  if (const auto *FD = dyn_cast_or_null<FunctionDecl>(D))
+    if (FD->usesSEHTry())
+      CurSEHParent = FD;
   CurFuncDecl = (D ? D->getNonClosureContext() : nullptr);
   FnRetTy = RetTy;
   CurFn = Fn;
@@ -803,9 +803,21 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   // are not aware of how to move the extra UBSan instructions across the split
   // coroutine boundaries.
   if (D && SanOpts.has(SanitizerKind::Null))
-    if (FD && FD->getBody() &&
-        FD->getBody()->getStmtClass() == Stmt::CoroutineBodyStmtClass)
-      SanOpts.Mask &= ~SanitizerKind::Null;
+    if (const auto *FD = dyn_cast<FunctionDecl>(D))
+      if (FD->getBody() &&
+          FD->getBody()->getStmtClass() == Stmt::CoroutineBodyStmtClass)
+        SanOpts.Mask &= ~SanitizerKind::Null;
+
+  // Add pointer authentication attributes.
+  const CodeGenOptions &CodeGenOpts = CGM.getCodeGenOpts();
+  if (CodeGenOpts.PointerAuth.ReturnAddresses)
+    Fn->addFnAttr("ptrauth-returns");
+  if (CodeGenOpts.PointerAuth.FunctionPointers)
+    Fn->addFnAttr("ptrauth-calls");
+  if (CodeGenOpts.PointerAuth.IndirectGotos)
+    Fn->addFnAttr("ptrauth-indirect-gotos");
+  if (CodeGenOpts.PointerAuth.AuthTraps)
+    Fn->addFnAttr("ptrauth-auth-traps");
 
   // Apply xray attributes to the function (as a string, for now)
   bool AlwaysXRayAttr = false;
@@ -895,27 +907,32 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   if (D && D->hasAttr<NoProfileFunctionAttr>())
     Fn->addFnAttr(llvm::Attribute::NoProfile);
 
-  if (FD && getLangOpts().OpenCL) {
+  if (getLangOpts().OpenCL) {
     // Add metadata for a kernel function.
-    EmitOpenCLKernelMetadata(FD, Fn);
+    if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D))
+      EmitOpenCLKernelMetadata(FD, Fn);
   }
 
   // If we are checking function types, emit a function type signature as
   // prologue data.
-  if (FD && getLangOpts().CPlusPlus && SanOpts.has(SanitizerKind::Function)) {
-    if (llvm::Constant *PrologueSig = getPrologueSignature(CGM, FD)) {
-      // Remove any (C++17) exception specifications, to allow calling e.g. a
-      // noexcept function through a non-noexcept pointer.
-      auto ProtoTy = getContext().getFunctionTypeWithExceptionSpec(
-          FD->getType(), EST_None);
-      llvm::Constant *FTRTTIConst =
-          CGM.GetAddrOfRTTIDescriptor(ProtoTy, /*ForEH=*/true);
-      llvm::Constant *FTRTTIConstEncoded =
-          EncodeAddrForUseInPrologue(Fn, FTRTTIConst);
-      llvm::Constant *PrologueStructElems[] = {PrologueSig, FTRTTIConstEncoded};
-      llvm::Constant *PrologueStructConst =
-          llvm::ConstantStruct::getAnon(PrologueStructElems, /*Packed=*/true);
-      Fn->setPrologueData(PrologueStructConst);
+  if (getLangOpts().CPlusPlus && SanOpts.has(SanitizerKind::Function)) {
+    if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
+      if (llvm::Constant *PrologueSig = getPrologueSignature(CGM, FD)) {
+        // Remove any (C++17) exception specifications, to allow calling e.g. a
+        // noexcept function through a non-noexcept pointer.
+        auto ProtoTy =
+          getContext().getFunctionTypeWithExceptionSpec(FD->getType(),
+                                                        EST_None);
+        llvm::Constant *FTRTTIConst =
+            CGM.GetAddrOfRTTIDescriptor(ProtoTy, /*ForEH=*/true);
+        llvm::Constant *FTRTTIConstEncoded =
+            EncodeAddrForUseInPrologue(Fn, FTRTTIConst);
+        llvm::Constant *PrologueStructElems[] = {PrologueSig,
+                                                 FTRTTIConstEncoded};
+        llvm::Constant *PrologueStructConst =
+            llvm::ConstantStruct::getAnon(PrologueStructElems, /*Packed=*/true);
+        Fn->setPrologueData(PrologueStructConst);
+      }
     }
   }
 
@@ -942,12 +959,14 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   //     kernels cannot include RTTI information, exception classes,
   //     recursive code, virtual functions or make use of C++ libraries that
   //     are not compiled for the device.
-  if (FD && ((getLangOpts().CPlusPlus && FD->isMain()) ||
-             getLangOpts().OpenCL || getLangOpts().SYCLIsDevice ||
-             (getLangOpts().CUDA && FD->hasAttr<CUDAGlobalAttr>())))
-    Fn->addFnAttr(llvm::Attribute::NoRecurse);
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
+    if ((getLangOpts().CPlusPlus && FD->isMain()) || getLangOpts().OpenCL ||
+        getLangOpts().SYCLIsDevice ||
+        (getLangOpts().CUDA && FD->hasAttr<CUDAGlobalAttr>()))
+      Fn->addFnAttr(llvm::Attribute::NoRecurse);
+  }
 
-  if (FD) {
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D)) {
     Builder.setIsFPConstrained(FD->hasAttr<StrictFPAttr>());
     if (FD->hasAttr<StrictFPAttr>())
       Fn->addFnAttr(llvm::Attribute::StrictFP);
@@ -955,9 +974,10 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
 
   // If a custom alignment is used, force realigning to this alignment on
   // any main function which certainly will need it.
-  if (FD && ((FD->isMain() || FD->isMSVCRTEntryPoint()) &&
-             CGM.getCodeGenOpts().StackAlignment))
-    Fn->addFnAttr("stackrealign");
+  if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D))
+    if ((FD->isMain() || FD->isMSVCRTEntryPoint()) &&
+        CGM.getCodeGenOpts().StackAlignment)
+      Fn->addFnAttr("stackrealign");
 
   llvm::BasicBlock *EntryBB = createBasicBlock("entry", CurFn);
 
@@ -984,7 +1004,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
     // such as 'this' and 'vtt', show up in the debug info. Preserve the calling
     // convention.
     CallingConv CC = CallingConv::CC_C;
-    if (FD)
+    if (auto *FD = dyn_cast_or_null<FunctionDecl>(D))
       if (const auto *SrcFnTy = FD->getType()->getAs<FunctionType>())
         CC = SrcFnTy->getCallConv();
     SmallVector<QualType, 16> ArgTypes;
@@ -1075,8 +1095,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
     unsigned Idx = CurFnInfo->getReturnInfo().getInAllocaFieldIndex();
     llvm::Function::arg_iterator EI = CurFn->arg_end();
     --EI;
-    llvm::Value *Addr = Builder.CreateStructGEP(
-        EI->getType()->getPointerElementType(), &*EI, Idx);
+    llvm::Value *Addr = Builder.CreateStructGEP(nullptr, &*EI, Idx);
     llvm::Type *Ty =
         cast<llvm::GetElementPtrInst>(Addr)->getResultElementType();
     ReturnValuePointer = Address(Addr, getPointerAlign());
@@ -1296,14 +1315,8 @@ void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn,
   QualType ResTy = BuildFunctionArgList(GD, Args);
 
   // Check if we should generate debug info for this function.
-  if (FD->hasAttr<NoDebugAttr>()) {
-    // Clear non-distinct debug info that was possibly attached to the function
-    // due to an earlier declaration without the nodebug attribute
-    if (Fn)
-      Fn->setSubprogram(nullptr);
-    // Disable debug info indefinitely for this function
-    DebugInfo = nullptr;
-  }
+  if (FD->hasAttr<NoDebugAttr>())
+    DebugInfo = nullptr; // disable debug info indefinitely for this function
 
   // The function might not have a body if we're generating thunks for a
   // function declaration.
@@ -2669,9 +2682,99 @@ llvm::DebugLoc CodeGenFunction::SourceLocToDebugLoc(SourceLocation Location) {
   return llvm::DebugLoc();
 }
 
+void CodeGenFunction::EmitPointerAuthOperandBundle(
+                          const CGPointerAuthInfo &pointerAuth,
+                          SmallVectorImpl<llvm::OperandBundleDef> &bundles) {
+  if (!pointerAuth.isSigned()) return;
+
+  auto key = Builder.getInt32(pointerAuth.getKey());
+
+  llvm::Value *discriminator = pointerAuth.getDiscriminator();
+  if (!discriminator) {
+    discriminator = Builder.getSize(0);
+  }
+
+  llvm::Value *args[] = { key, discriminator };
+  bundles.emplace_back("ptrauth", args);
+}
+
+static llvm::Value *EmitPointerAuthCommon(CodeGenFunction &CGF,
+                                          const CGPointerAuthInfo &pointerAuth,
+                                          llvm::Value *pointer,
+                                          unsigned intrinsicID) {
+  if (!pointerAuth) return pointer;
+
+  auto key = CGF.Builder.getInt32(pointerAuth.getKey());
+
+  llvm::Value *discriminator = pointerAuth.getDiscriminator();
+  if (!discriminator) {
+    discriminator = CGF.Builder.getSize(0);
+  }
+
+  // Convert the pointer to intptr_t before signing it.
+  auto origType = pointer->getType();
+  pointer = CGF.Builder.CreatePtrToInt(pointer, CGF.IntPtrTy);
+
+  // call i64 @llvm.ptrauth.sign.i64(i64 %pointer, i32 %key, i64 %discriminator)
+  auto intrinsic =
+    CGF.CGM.getIntrinsic(intrinsicID, { CGF.IntPtrTy });
+  pointer = CGF.EmitRuntimeCall(intrinsic, { pointer, key, discriminator });
+
+  // Convert back to the original type.
+  pointer = CGF.Builder.CreateIntToPtr(pointer, origType);
+  return pointer;
+}
+
+llvm::Value *
+CodeGenFunction::EmitPointerAuthSign(const CGPointerAuthInfo &pointerAuth,
+                                     llvm::Value *pointer) {
+  return EmitPointerAuthCommon(*this, pointerAuth, pointer,
+                               llvm::Intrinsic::ptrauth_sign);
+}
+
+llvm::Value *
+CodeGenFunction::EmitPointerAuthAuth(const CGPointerAuthInfo &pointerAuth,
+                                     llvm::Value *pointer) {
+  return EmitPointerAuthCommon(*this, pointerAuth, pointer,
+                               llvm::Intrinsic::ptrauth_auth);
+}
+
+llvm::Value *
+CodeGenFunction::EmitPointerAuthResignCall(llvm::Value *value,
+                                           const CGPointerAuthInfo &curAuth,
+                                           const CGPointerAuthInfo &newAuth) {
+  assert(curAuth && newAuth);
+
+  // Convert the pointer to intptr_t before signing it.
+  auto origType = value->getType();
+  value = Builder.CreatePtrToInt(value, IntPtrTy);
+
+  auto curKey = Builder.getInt32(curAuth.getKey());
+  auto newKey = Builder.getInt32(newAuth.getKey());
+
+  llvm::Value *curDiscriminator = curAuth.getDiscriminator();
+  if (!curDiscriminator) curDiscriminator = Builder.getSize(0);
+
+  llvm::Value *newDiscriminator = newAuth.getDiscriminator();
+  if (!newDiscriminator) newDiscriminator = Builder.getSize(0);
+
+  // call i64 @llvm.ptrauth.resign.i64(i64 %pointer,
+  //                                   i32 %curKey, i64 %curDiscriminator,
+  //                                   i32 %newKey, i64 %newDiscriminator)
+  auto intrinsic =
+    CGM.getIntrinsic(llvm::Intrinsic::ptrauth_resign, { IntPtrTy });
+  value = EmitRuntimeCall(intrinsic,
+                          { value, curKey, curDiscriminator,
+                            newKey, newDiscriminator });
+
+  // Convert back to the original type.
+  value = Builder.CreateIntToPtr(value, origType);
+  return value;
+}
+
 llvm::Value *
 CodeGenFunction::emitCondLikelihoodViaExpectIntrinsic(llvm::Value *Cond,
-                                                      Stmt::Likelihood LH) {
+                                                    Stmt::Likelihood LH) {
   switch (LH) {
   case Stmt::LH_None:
     return Cond;

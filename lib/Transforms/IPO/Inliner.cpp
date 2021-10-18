@@ -724,31 +724,21 @@ private:
   size_t FirstIndex = 0;
 };
 
-class Priority {
-public:
-  Priority(int Size) : Size(Size) {}
-
-  static bool isMoreDesirable(const Priority &S1, const Priority &S2) {
-    return S1.Size < S2.Size;
-  }
-
-  static Priority evaluate(CallBase *CB) {
-    Function *Callee = CB->getCalledFunction();
-    return Priority(Callee->getInstructionCount());
-  }
-
-  int Size;
-};
-
-template <typename PriorityT>
 class PriorityInlineOrder : public InlineOrder<std::pair<CallBase *, int>> {
   using T = std::pair<CallBase *, int>;
-  using HeapT = std::pair<CallBase *, PriorityT>;
   using reference = T &;
   using const_reference = const T &;
 
-  static bool cmp(const HeapT &P1, const HeapT &P2) {
-    return PriorityT::isMoreDesirable(P2.second, P1.second);
+  // Return true if S1 is more desirable than S2.
+  static bool isMoreDesirable(int S1, int S2) { return S1 < S2; }
+
+  static bool cmp(const T &P1, const T &P2) {
+    return isMoreDesirable(P2.second, P1.second);
+  }
+
+  int evaluate(CallBase *CB) {
+    Function *Callee = CB->getCalledFunction();
+    return (int)Callee->getInstructionCount();
   }
 
   // A call site could become less desirable for inlining because of the size
@@ -762,9 +752,9 @@ class PriorityInlineOrder : public InlineOrder<std::pair<CallBase *, int>> {
     bool Changed = false;
     do {
       CallBase *CB = Heap.front().first;
-      const PriorityT PreviousGoodness = Heap.front().second;
-      const PriorityT CurrentGoodness = PriorityT::evaluate(CB);
-      Changed = PriorityT::isMoreDesirable(PreviousGoodness, CurrentGoodness);
+      const int PreviousGoodness = Heap.front().second;
+      const int CurrentGoodness = evaluate(CB);
+      Changed = isMoreDesirable(PreviousGoodness, CurrentGoodness);
       if (Changed) {
         std::pop_heap(Heap.begin(), Heap.end(), cmp);
         Heap.pop_back();
@@ -780,7 +770,7 @@ public:
   void push(const T &Elt) override {
     CallBase *CB = Elt.first;
     const int InlineHistoryID = Elt.second;
-    const PriorityT Goodness = PriorityT::evaluate(CB);
+    const int Goodness = evaluate(CB);
 
     Heap.push_back({CB, Goodness});
     std::push_heap(Heap.begin(), Heap.end(), cmp);
@@ -808,16 +798,12 @@ public:
   }
 
   void erase_if(function_ref<bool(T)> Pred) override {
-    auto PredWrapper = [=](HeapT P) -> bool {
-      return Pred(std::make_pair(P.first, 0));
-    };
-    Heap.erase(std::remove_if(Heap.begin(), Heap.end(), PredWrapper),
-               Heap.end());
+    Heap.erase(std::remove_if(Heap.begin(), Heap.end(), Pred), Heap.end());
     std::make_heap(Heap.begin(), Heap.end(), cmp);
   }
 
 private:
-  SmallVector<HeapT, 16> Heap;
+  SmallVector<T, 16> Heap;
   DenseMap<CallBase *, int> InlineHistoryMap;
 };
 
@@ -868,7 +854,7 @@ PreservedAnalyses InlinerPass::run(LazyCallGraph::SCC &InitialC,
   // incrementally maknig a single function grow in a super linear fashion.
   std::unique_ptr<InlineOrder<std::pair<CallBase *, int>>> Calls;
   if (InlineEnablePriorityOrder)
-    Calls = std::make_unique<PriorityInlineOrder<Priority>>();
+    Calls = std::make_unique<PriorityInlineOrder>();
   else
     Calls = std::make_unique<DefaultInlineOrder<std::pair<CallBase *, int>>>();
   assert(Calls != nullptr && "Expected an initialized InlineOrder");
@@ -1007,8 +993,6 @@ PreservedAnalyses InlinerPass::run(LazyCallGraph::SCC &InitialC,
 
         for (CallBase *ICB : reverse(IFI.InlinedCallSites)) {
           Function *NewCallee = ICB->getCalledFunction();
-          assert(!(NewCallee && NewCallee->isIntrinsic()) &&
-                 "Intrinsic calls should not be tracked.");
           if (!NewCallee) {
             // Try to promote an indirect (virtual) call without waiting for
             // the post-inline cleanup and the next DevirtSCCRepeatedPass
@@ -1126,10 +1110,6 @@ PreservedAnalyses InlinerPass::run(LazyCallGraph::SCC &InitialC,
     // them.
     UR.InvalidatedSCCs.insert(&DeadC);
     UR.InvalidatedRefSCCs.insert(&DeadRC);
-
-    // If the updated SCC was the one containing the deleted function, clear it.
-    if (&DeadC == UR.UpdatedC)
-      UR.UpdatedC = nullptr;
 
     // And delete the actual function from the module.
     // The Advisor may use Function pointers to efficiently index various

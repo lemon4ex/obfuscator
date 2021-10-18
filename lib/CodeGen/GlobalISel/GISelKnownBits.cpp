@@ -501,13 +501,13 @@ void GISelKnownBits::computeKnownBitsImpl(Register R, KnownBits &Known,
   case TargetOpcode::G_BSWAP: {
     Register SrcReg = MI.getOperand(1).getReg();
     computeKnownBitsImpl(SrcReg, Known, DemandedElts, Depth + 1);
-    Known = Known.byteSwap();
+    Known.byteSwap();
     break;
   }
   case TargetOpcode::G_BITREVERSE: {
     Register SrcReg = MI.getOperand(1).getReg();
     computeKnownBitsImpl(SrcReg, Known, DemandedElts, Depth + 1);
-    Known = Known.reverseBits();
+    Known.reverseBits();
     break;
   }
   case TargetOpcode::G_UBFX: {

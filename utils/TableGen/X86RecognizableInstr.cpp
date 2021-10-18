@@ -125,7 +125,13 @@ RecognizableInstr::RecognizableInstr(DisassemblerTables &tables,
     return;
   }
 
-  ShouldBeEmitted = true;
+  // Special case since there is no attribute class for 64-bit and VEX
+  if (Name == "VMASKMOVDQU64") {
+    ShouldBeEmitted = false;
+    return;
+  }
+
+  ShouldBeEmitted  = true;
 }
 
 void RecognizableInstr::processInstr(DisassemblerTables &tables,
@@ -261,11 +267,6 @@ InstructionContext RecognizableInstr::insnContext() const {
       insnContext = IC_VEX_L_OPSIZE;
     else if (OpPrefix == X86Local::PD && HasVEX_W)
       insnContext = IC_VEX_W_OPSIZE;
-    else if (OpPrefix == X86Local::PD && Is64Bit &&
-             AdSize == X86Local::AdSize32)
-      insnContext = IC_64BIT_VEX_OPSIZE_ADSIZE;
-    else if (OpPrefix == X86Local::PD && Is64Bit)
-      insnContext = IC_64BIT_VEX_OPSIZE;
     else if (OpPrefix == X86Local::PD)
       insnContext = IC_VEX_OPSIZE;
     else if (HasVEX_LPrefix && OpPrefix == X86Local::XS)

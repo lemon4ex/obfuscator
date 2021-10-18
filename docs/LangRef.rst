@@ -601,29 +601,11 @@ Non-integral pointer types represent pointers that have an *unspecified* bitwise
 representation; that is, the integral representation may be target dependent or
 unstable (not backed by a fixed integer).
 
-``inttoptr`` and ``ptrtoint`` instructions have the same semantics as for
-integral (i.e. normal) pointers in that they convert integers to and from
-corresponding pointer types, but there are additional implications to be
-aware of.  Because the bit-representation of a non-integral pointer may
-not be stable, two identical casts of the same operand may or may not
-return the same value.  Said differently, the conversion to or from the
-non-integral type depends on environmental state in an implementation
-defined manner.
-
-If the frontend wishes to observe a *particular* value following a cast, the
-generated IR must fence with the underlying environment in an implementation
-defined manner. (In practice, this tends to require ``noinline`` routines for
-such operations.)
-
-From the perspective of the optimizer, ``inttoptr`` and ``ptrtoint`` for
-non-integral types are analogous to ones on integral types with one
-key exception: the optimizer may not, in general, insert new dynamic
-occurrences of such casts.  If a new cast is inserted, the optimizer would
-need to either ensure that a) all possible values are valid, or b)
-appropriate fencing is inserted.  Since the appropriate fencing is
-implementation defined, the optimizer can't do the latter.  The former is
-challenging as many commonly expected properties, such as
-``ptrtoint(v)-ptrtoint(v) == 0``, don't hold for non-integral types.  
+``inttoptr`` and ``ptrtoint`` instructions converting integers to non-integral
+pointer types or vice versa are implementation defined, and subject to likely
+future revision in semantics. Vector versions of said instructions are as well.
+Users of non-integral-pointer types are advised not to design around current
+semantics as they may very well change in the nearish future.
 
 .. _globalvars:
 
@@ -915,24 +897,21 @@ Syntax::
 Comdats
 -------
 
-Comdat IR provides access to object file COMDAT/section group functionality
-which represents interrelated sections.
+Comdat IR provides access to COFF and ELF object file COMDAT functionality.
 
-Comdats have a name which represents the COMDAT key and a selection kind to
-provide input on how the linker deduplicates comdats with the same key in two
-different object files. A comdat must be included or omitted as a unit.
-Discarding the whole comdat is allowed but discarding a subset is not.
+Comdats have a name which represents the COMDAT key. All global objects that
+specify this key will only end up in the final object file if the linker chooses
+that key over some other key. Aliases are placed in the same COMDAT that their
+aliasee computes to, if any.
 
-A global object may be a member of at most one comdat. Aliases are placed in the
-same COMDAT that their aliasee computes to, if any.
+Comdats have a selection kind to provide input on how the linker should
+choose between keys in two different object files.
 
 Syntax::
 
     $<Name> = comdat SelectionKind
 
-For selection kinds other than ``nodeduplicate``, only one of the duplicate
-comdats may be retained by the linker and the members of the remaining comdats
-must be discarded. The following selection kinds are supported:
+The selection kind must be one of the following:
 
 ``any``
     The linker may choose any COMDAT key, the choice is arbitrary.
@@ -941,19 +920,16 @@ must be discarded. The following selection kinds are supported:
     same data.
 ``largest``
     The linker will choose the section containing the largest COMDAT key.
-``nodeduplicate``
-    No deduplication is performed.
+``noduplicates``
+    The linker requires that only section with this COMDAT key exist.
 ``samesize``
     The linker may choose any COMDAT key but the sections must contain the
     same amount of data.
 
-- XCOFF and Mach-O don't support COMDATs.
-- COFF supports all selection kinds. Non-``nodeduplicate`` selection kinds need
-  a non-local linkage COMDAT symbol.
-- ELF supports ``any`` and ``nodeduplicate``.
-- WebAssembly only supports ``any``.
+Note that XCOFF and the Mach-O platform don't support COMDATs, and ELF and
+WebAssembly only support ``any`` as a selection kind.
 
-Here is an example of a COFF COMDAT where a function will only be selected if
+Here is an example of a COMDAT group where a function will only be selected if
 the COMDAT key's section is the largest:
 
 .. code-block:: text
@@ -965,12 +941,6 @@ the COMDAT key's section is the largest:
      ret void
    }
 
-In a COFF object file, this will create a COMDAT section with selection kind
-``IMAGE_COMDAT_SELECT_LARGEST`` containing the contents of the ``@foo`` symbol
-and another COMDAT section with selection kind
-``IMAGE_COMDAT_SELECT_ASSOCIATIVE`` which is associated with the first COMDAT
-section and contains the contents of the ``@bar`` symbol.
-
 As a syntactic sugar the ``$name`` can be omitted if the name is the same as
 the global name:
 
@@ -978,7 +948,13 @@ the global name:
 
   $foo = comdat any
   @foo = global i32 2, comdat
-  @bar = global i32 3, comdat($foo)
+
+
+In a COFF object file, this will create a COMDAT section with selection kind
+``IMAGE_COMDAT_SELECT_LARGEST`` containing the contents of the ``@foo`` symbol
+and another COMDAT section with selection kind
+``IMAGE_COMDAT_SELECT_ASSOCIATIVE`` which is associated with the first COMDAT
+section and contains the contents of the ``@bar`` symbol.
 
 There are some restrictions on the properties of the global object.
 It, or an alias to it, must have the same name as the COMDAT group when
@@ -1188,24 +1164,6 @@ Currently, only the following parameter attributes are defined:
 
     The sret type argument specifies the in memory type, which must be
     the same as the pointee type of the argument.
-
-.. _attr_elementtype:
-
-``elementtype(<ty>)``
-
-    The ``elementtype`` argument attribute can be used to specify a pointer
-    element type in a way that is compatible with `opaque pointers
-    <OpaquePointers.html>`.
-
-    The ``elementtype`` attribute by itself does not carry any specific
-    semantics. However, certain intrinsics may require this attribute to be
-    present and assign it particular semantics. This will be documented on
-    individual intrinsics.
-
-    The attribute may only be applied to pointer typed arguments of intrinsic
-    calls. It cannot be applied to non-intrinsic calls, and cannot be applied
-    to parameters on function declarations. For non-opaque pointers, the type
-    passed to ``elementtype`` must match the pointer element type.
 
 .. _attr_align:
 
@@ -1698,10 +1656,6 @@ example:
     This attribute suppresses lazy symbol binding for the function. This
     may make calls to the function faster, at the cost of extra program
     startup time if the function is not called during program startup.
-``noprofile``
-    This function attribute prevents instrumentation based profiling, used for
-    coverage or profile based optimization, from being added to a function,
-    even when inlined.
 ``noredzone``
     This attribute indicates that the code generator should not use a
     red zone, even if the target-specific ABI normally permits it.
@@ -1968,8 +1922,7 @@ example:
     A function with the ``ssp`` attribute but without the ``alwaysinline``
     attribute cannot be inlined into a function without a
     ``ssp/sspreq/sspstrong`` attribute. If inlined, the caller will get the
-    ``ssp`` attribute. ``call``, ``invoke``, and ``callbr`` instructions with
-    the ``alwaysinline`` attribute force inlining.
+    ``ssp`` attribute.
 ``sspstrong``
     This attribute indicates that the function should emit a stack smashing
     protector. This attribute causes a strong heuristic to be used when
@@ -1997,9 +1950,7 @@ example:
     A function with the ``sspstrong`` attribute but without the
     ``alwaysinline`` attribute cannot be inlined into a function without a
     ``ssp/sspstrong/sspreq`` attribute. If inlined, the caller will get the
-    ``sspstrong`` attribute unless the ``sspreq`` attribute exists.  ``call``,
-    ``invoke``, and ``callbr`` instructions with the ``alwaysinline`` attribute
-    force inlining.
+    ``sspstrong`` attribute unless the ``sspreq`` attribute exists.
 ``sspreq``
     This attribute indicates that the function should *always* emit a stack
     smashing protector. This overrides the ``ssp`` and ``sspstrong`` function
@@ -2019,8 +1970,7 @@ example:
     A function with the ``sspreq`` attribute but without the ``alwaysinline``
     attribute cannot be inlined into a function without a
     ``ssp/sspstrong/sspreq`` attribute. If inlined, the caller will get the
-    ``sspreq`` attribute.  ``call``, ``invoke``, and ``callbr`` instructions
-    with the ``alwaysinline`` attribute force inlining.
+    ``sspreq`` attribute.
 
 ``strictfp``
     This attribute indicates that the function was called from a scope that
@@ -2148,7 +2098,7 @@ attributes are supported:
     determined by the rules of the Vector Function ABI (VFABI)
     specifications of the target. For Arm and X86, the VFABI can be
     found at https://github.com/ARM-software/abi-aa and
-    https://software.intel.com/content/www/us/en/develop/download/vector-simd-function-abi.html,
+    https://software.intel.com/en-us/articles/vector-simd-function-abi,
     respectively.
 
     For X86 and Arm targets, the values of the tokens in the standard
@@ -2348,6 +2298,13 @@ the appropriate GC_TRANSITION nodes in the selection DAG. It is assumed
 that these arguments must be available before and after (but not
 necessarily during) the execution of the callee.
 
+Pointer Authentication Operand Bundles
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Pointer Authentication operand bundles are characterized by the
+``"ptrauth"`` operand bundle tag.  They are described in the
+`Pointer Authentication <PointerAuth.html#operand-bundle>`_ document.
+
 .. _assume_opbundles:
 
 Assume Operand Bundles
@@ -2456,10 +2413,8 @@ A ``"clang.arc.attachedcall`` operand bundle on a call indicates the call is
 implicitly followed by a marker instruction and a call to an ObjC runtime
 function that uses the result of the call. If the argument passed to the operand
 bundle is 0, ``@objc_retainAutoreleasedReturnValue`` is called. If 1 is passed,
-``@objc_unsafeClaimAutoreleasedReturnValue`` is called. The return value of a
-call with this bundle is used by a call to ``@llvm.objc.clang.arc.noop.use``
-unless the called function's return type is void, in which case the operand
-bundle is ignored.
+``@objc_unsafeClaimAutoreleasedReturnValue`` is called. A call with this bundle
+implicitly uses its return value.
 
 The operand bundle is needed to ensure the call is immediately followed by the
 marker instruction or the ObjC runtime call in the final output.
@@ -2866,12 +2821,6 @@ A volatile operation may not call any code in the current module.
 The compiler may assume execution will continue after a volatile operation,
 so operations which modify memory or may have undefined behavior can be
 hoisted past a volatile operation.
-
-As an exception to the preceding rule, the compiler may not assume execution
-will continue after a volatile store operation. This restriction is necessary
-to support the somewhat common pattern in C of intentionally storing to an
-invalid pointer to crash the program. In the future, it might make sense to
-allow frontends to control this behavior.
 
 IR-level volatile loads and stores cannot safely be optimized into llvm.memcpy
 or llvm.memmove intrinsics even when those intrinsics are flagged volatile.
@@ -4126,11 +4075,7 @@ Addresses of Basic Blocks
 ``blockaddress(@function, %block)``
 
 The '``blockaddress``' constant computes the address of the specified
-basic block in the specified function.
-
-It always has an ``i8 addrspace(P)*`` type, where ``P`` is the address space
-of the function containing ``%block`` (usually ``addrspace(0)``).
-
+basic block in the specified function, and always has an ``i8*`` type.
 Taking the address of the entry block is illegal.
 
 This value only has defined behavior when used as an operand to the
@@ -5047,8 +4992,8 @@ occurs on.
 Metadata
 ========
 
-LLVM IR allows metadata to be attached to instructions and global objects in the
-program that can convey extra information about the code to the optimizers and
+LLVM IR allows metadata to be attached to instructions in the program
+that can convey extra information about the code to the optimizers and
 code generator. One example application of metadata is source-level
 debug information. There are two metadata primitives: strings and nodes.
 
@@ -5108,9 +5053,6 @@ to the ``add`` instruction using the ``!dbg`` identifier:
 
     %indvar.next = add i64 %indvar, 1, !dbg !21
 
-Instructions may not have multiple metadata attachments with the same
-identifier.
-
 Metadata can also be attached to a function or a global variable. Here metadata
 ``!22`` is attached to the ``f1`` and ``f2`` functions, and the globals ``g1``
 and ``g2`` using the ``!dbg`` identifier:
@@ -5124,9 +5066,6 @@ and ``g2`` using the ``!dbg`` identifier:
 
     @g1 = global i32 0, !dbg !22
     @g2 = external global i32, !dbg !22
-
-Unlike instructions, global objects (functions and global variables) may have
-multiple metadata attachments with the same identifier.
 
 A transformation is required to drop any metadata attachment that it does not
 know or know it can't preserve. Currently there is an exception for metadata
@@ -6892,29 +6831,17 @@ See :doc:`TypeMetadata`.
 '``associated``' Metadata
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The ``associated`` metadata may be attached to a global variable definition with
-a single argument that references a global object (optionally through an alias).
+The ``associated`` metadata may be attached to a global object
+declaration with a single argument that references another global object.
 
-This metadata lowers to the ELF section flag ``SHF_LINK_ORDER`` which prevents
-discarding of the global variable in linker GC unless the referenced object is
-also discarded. The linker support for this feature is spotty. For best
-compatibility, globals carrying this metadata should:
+This metadata prevents discarding of the global object in linker GC
+unless the referenced object is also discarded. The linker support for
+this feature is spotty. For best compatibility, globals carrying this
+metadata may also:
 
-- Be in ``@llvm.compiler.used``.
-- If the referenced global variable is in a comdat, be in the same comdat.
-
-``!associated`` can not express many-to-one relationship. A global variable with
-the metadata should generally not be referenced by a function: the function may
-be inlined into other functions, leading to more references to the metadata.
-Ideally we would want to keep metadata alive as long as any inline location is
-alive, but this many-to-one relationship is not representable. Moreover, if the
-metadata is retained while the function is discarded, the linker will report an
-error of a relocation referencing a discarded section.
-
-The metadata is often used with an explicit section consisting of valid C
-identifiers so that the runtime can find the metadata section with
-linker-defined encapsulation symbols ``__start_<section_name>`` and
-``__stop_<section_name>``.
+- Be in a comdat with the referenced global.
+- Be in @llvm.compiler.used.
+- Have an explicit section with a name which is a valid C identifier.
 
 It does not have any effect on non-ELF targets.
 
@@ -7749,7 +7676,6 @@ functions with the same priority is not defined.
 If the third field is non-null, and points to a global variable
 or function, the initializer function will only run if the associated
 data from the current module is not discarded.
-On ELF the referenced global variable or function must be in a comdat.
 
 .. _llvmglobaldtors:
 
@@ -7770,7 +7696,6 @@ order of functions with the same priority is not defined.
 If the third field is non-null, and points to a global variable
 or function, the destructor function will only run if the associated
 data from the current module is not discarded.
-On ELF the referenced global variable or function must be in a comdat.
 
 Instruction Reference
 =====================
@@ -14210,7 +14135,7 @@ all types however.
 
 ::
 
-      declare float     @llvm.maxnum.f32(float  %Val0, float  %Val1)
+      declare float     @llvm.maxnum.f32(float  %Val0, float  %Val1l)
       declare double    @llvm.maxnum.f64(double %Val0, double %Val1)
       declare x86_fp80  @llvm.maxnum.f80(x86_fp80  %Val0, x86_fp80  %Val1)
       declare fp128     @llvm.maxnum.f128(fp128 %Val0, fp128 %Val1)
@@ -17540,6 +17465,13 @@ Exception Handling Intrinsics
 The LLVM exception handling intrinsics (which all start with
 ``llvm.eh.`` prefix), are described in the `LLVM Exception
 Handling <ExceptionHandling.html#format-common-intrinsics>`_ document.
+
+Pointer Authentication Intrinsics
+---------------------------------
+
+The LLVM pointer authentication intrinsics (which all start with
+``llvm.ptrauth.`` prefix), are described in the `Pointer Authentication
+<PointerAuth.html#intrinsics>`_ document.
 
 .. _int_trampoline:
 
@@ -21535,42 +21467,6 @@ If the function's return value's second element is false, the value of the
 first element is undefined.
 
 
-'``llvm.arithmetic.fence``' Intrinsic
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Syntax:
-"""""""
-
-::
-
-      declare <type>
-      @llvm.arithmetic.fence(<type> <op>)
-
-Overview:
-"""""""""
-
-The purpose of the ``llvm.arithmetic.fence`` intrinsic
-is to prevent the optimizer from performaing fast-math optimizations,
-particularly reassociation,
-between the argument and the expression that contains the argument.
-It can be used to preserve the parentheses in the source language.
-
-Arguments:
-""""""""""
-
-The ``llvm.arithmetic.fence`` intrinsic takes only one argument.
-The argument and the return value are floating-point numbers,
-or vector floating-point numbers, of the same type.
-
-Semantics:
-""""""""""
-
-This intrinsic returns the value of its operand. The optimizer can optimize
-the argument, but the optimizer cannot hoist any component of the operand
-to the containing context, and the optimizer cannot move the calculation of
-any expression in the containing context into the operand.
-
-
 '``llvm.donothing``' Intrinsic
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -22575,10 +22471,6 @@ The ``base`` is the array base address.  The ``dim`` is the array dimension.
 The ``base`` is a pointer if ``dim`` equals 0.
 The ``index`` is the last access index into the array or pointer.
 
-The ``base`` argument must be annotated with an :ref:`elementtype
-<attr_elementtype>` attribute at the call-site. This attribute specifies the
-getelementptr element type.
-
 Semantics:
 """"""""""
 
@@ -22643,10 +22535,6 @@ Arguments:
 
 The ``base`` is the structure base address. The ``gep_index`` is the struct member index
 based on IR structures. The ``di_index`` is the struct member index based on debuginfo.
-
-The ``base`` argument must be annotated with an :ref:`elementtype
-<attr_elementtype>` attribute at the call-site. This attribute specifies the
-getelementptr element type.
 
 Semantics:
 """"""""""

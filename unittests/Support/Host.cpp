@@ -39,7 +39,7 @@ protected:
     // physical cores, which is currently only supported/tested on
     // some systems.
     return (Host.isOSWindows() && llvm_is_multithreaded()) ||
-           Host.isOSDarwin() || (Host.isX86() && Host.isOSLinux()) ||
+           (Host.isX86() && (Host.isOSDarwin() || Host.isOSLinux())) ||
            (Host.isPPC64() && Host.isOSLinux()) ||
            (Host.isSystemZ() && (Host.isOSLinux() || Host.isOSzOS()));
   }
@@ -312,13 +312,9 @@ CPU revision    : 0
 
 TEST(getLinuxHostCPUName, s390x) {
   SmallVector<std::string> ModelIDs(
-      {"3931", "8561", "3906", "2964", "2827", "2817", "2097", "2064"});
+      {"8561", "3906", "2964", "2827", "2817", "7"});
   SmallVector<std::string> VectorSupport({"", "vx"});
   SmallVector<StringRef> ExpectedCPUs;
-
-  // Model Id: 3931
-  ExpectedCPUs.push_back("zEC12");
-  ExpectedCPUs.push_back("arch14");
 
   // Model Id: 8561
   ExpectedCPUs.push_back("zEC12");
@@ -340,11 +336,7 @@ TEST(getLinuxHostCPUName, s390x) {
   ExpectedCPUs.push_back("z196");
   ExpectedCPUs.push_back("z196");
 
-  // Model Id: 2097
-  ExpectedCPUs.push_back("z10");
-  ExpectedCPUs.push_back("z10");
-
-  // Model Id: 2064
+  // Model Id: 7
   ExpectedCPUs.push_back("generic");
   ExpectedCPUs.push_back("generic");
 

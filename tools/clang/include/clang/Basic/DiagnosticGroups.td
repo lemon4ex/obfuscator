@@ -466,6 +466,7 @@ def ModuleBuild : DiagGroup<"module-build">;
 def ModuleImport : DiagGroup<"module-import">;
 def ModuleConflict : DiagGroup<"module-conflict">;
 def ModuleFileExtension : DiagGroup<"module-file-extension">;
+def IndexStore : DiagGroup<"index-store">;
 def RoundTripCC1Args : DiagGroup<"round-trip-cc1-args">;
 def NewlineEOF : DiagGroup<"newline-eof">;
 def Nullability : DiagGroup<"nullability">;
@@ -487,7 +488,6 @@ def ClassVarargs : DiagGroup<"class-varargs", [NonPODVarargs]>;
 def : DiagGroup<"nonportable-cfstrings">;
 def NonVirtualDtor : DiagGroup<"non-virtual-dtor">;
 def NullPointerArithmetic : DiagGroup<"null-pointer-arithmetic">;
-def NullPointerSubtraction : DiagGroup<"null-pointer-subtraction">;
 def : DiagGroup<"effc++", [NonVirtualDtor]>;
 def OveralignedType : DiagGroup<"over-aligned">;
 def OldStyleCast : DiagGroup<"old-style-cast">;
@@ -770,8 +770,7 @@ def DeallocInCategory:DiagGroup<"dealloc-in-category">;
 def SelectorTypeMismatch : DiagGroup<"selector-type-mismatch">;
 def Selector : DiagGroup<"selector", [SelectorTypeMismatch]>;
 def Protocol : DiagGroup<"protocol">;
-// No longer in use, preserve for backwards compatibility.
-def : DiagGroup<"at-protocol">;
+def AtProtocol : DiagGroup<"at-protocol">;
 def PropertyAccessDotSyntax: DiagGroup<"property-access-dot-syntax">;
 def PropertyAttr : DiagGroup<"property-attribute-mismatch">;
 def SuperSubClassMismatch : DiagGroup<"super-class-method-mismatch">;
@@ -786,6 +785,7 @@ def Visibility : DiagGroup<"visibility">;
 def ZeroLengthArray : DiagGroup<"zero-length-array">;
 def GNUZeroLineDirective : DiagGroup<"gnu-zero-line-directive">;
 def GNUZeroVariadicMacroArguments : DiagGroup<"gnu-zero-variadic-macro-arguments">;
+def PtrAuthNullPointers : DiagGroup<"ptrauth-null-pointers">;
 def MisleadingIndentation : DiagGroup<"misleading-indentation">;
 
 // This covers both the deprecated case (in C++98)
@@ -933,7 +933,6 @@ def Extra : DiagGroup<"extra", [
     UnusedParameter,
     UnusedButSetParameter,
     NullPointerArithmetic,
-    NullPointerSubtraction,
     EmptyInitStatement,
     StringConcatation,
     FUseLdPath,
@@ -1085,9 +1084,6 @@ def GNU : DiagGroup<"gnu", [GNUAlignofExpression, GNUAnonymousStruct,
 // A warning group for warnings about code that clang accepts but gcc doesn't.
 def GccCompat : DiagGroup<"gcc-compat">;
 
-// A warning group for warnings about code that may be incompatible on AIX.
-def AIXCompat : DiagGroup<"aix-compat">;
-
 // Warnings for Microsoft extensions.
 def MicrosoftCharize : DiagGroup<"microsoft-charize">;
 def MicrosoftDrectveSection : DiagGroup<"microsoft-drectve-section">;
@@ -1191,11 +1187,8 @@ def OpenMPClauses : DiagGroup<"openmp-clauses">;
 def OpenMPLoopForm : DiagGroup<"openmp-loop-form">;
 def OpenMPMapping : DiagGroup<"openmp-mapping">;
 def OpenMPTarget : DiagGroup<"openmp-target", [OpenMPMapping]>;
-def OpenMPPre51Compat : DiagGroup<"pre-openmp-51-compat">;
-def OpenMP51Ext : DiagGroup<"openmp-51-extensions">;
 def OpenMP : DiagGroup<"openmp", [
-    SourceUsesOpenMP, OpenMPClauses, OpenMPLoopForm, OpenMPTarget,
-    OpenMPMapping, OpenMP51Ext
+    SourceUsesOpenMP, OpenMPClauses, OpenMPLoopForm, OpenMPTarget, OpenMPMapping
   ]>;
 
 // Backend warnings.

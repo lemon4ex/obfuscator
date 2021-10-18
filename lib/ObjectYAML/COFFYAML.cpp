@@ -49,7 +49,6 @@ ScalarEnumerationTraits<COFFYAML::WeakExternalCharacteristics>::enumeration(
   ECase(IMAGE_WEAK_EXTERN_SEARCH_NOLIBRARY);
   ECase(IMAGE_WEAK_EXTERN_SEARCH_LIBRARY);
   ECase(IMAGE_WEAK_EXTERN_SEARCH_ALIAS);
-  ECase(IMAGE_WEAK_EXTERN_ANTI_DEPENDENCY);
 }
 
 void ScalarEnumerationTraits<COFFYAML::AuxSymbolType>::enumeration(

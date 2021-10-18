@@ -358,13 +358,11 @@ public:
     case CC_OpenCLKernel:
       return CCCR_OK;
     case CC_SwiftAsync:
-      return CCCR_Error;
+      return checkSwiftAsyncCCSupported();
     default:
       return CCCR_Warning;
     }
   }
-
-  bool checkArithmeticFenceSupported() const override { return true; }
 
   CallingConv getDefaultCallingConv() const override {
     return CC_C;
@@ -719,7 +717,6 @@ public:
     switch (CC) {
     case CC_C:
     case CC_Swift:
-    case CC_SwiftAsync:
     case CC_X86VectorCall:
     case CC_IntelOclBicc:
     case CC_Win64:
@@ -728,6 +725,8 @@ public:
     case CC_X86RegCall:
     case CC_OpenCLKernel:
       return CCCR_OK;
+    case CC_SwiftAsync:
+      return checkSwiftAsyncCCSupported();
     default:
       return CCCR_Warning;
     }
@@ -801,10 +800,11 @@ public:
     case CC_PreserveAll:
     case CC_X86_64SysV:
     case CC_Swift:
-    case CC_SwiftAsync:
     case CC_X86RegCall:
     case CC_OpenCLKernel:
       return CCCR_OK;
+    case CC_SwiftAsync:
+      return checkSwiftAsyncCCSupported();
     default:
       return CCCR_Warning;
     }

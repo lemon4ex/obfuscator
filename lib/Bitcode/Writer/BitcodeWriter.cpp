@@ -630,8 +630,6 @@ static uint64_t getAttrKindEncoding(Attribute::AttrKind Kind) {
     return bitc::ATTR_KIND_COLD;
   case Attribute::Hot:
     return bitc::ATTR_KIND_HOT;
-  case Attribute::ElementType:
-    return bitc::ATTR_KIND_ELEMENTTYPE;
   case Attribute::InaccessibleMemOnly:
     return bitc::ATTR_KIND_INACCESSIBLEMEM_ONLY;
   case Attribute::InaccessibleMemOrArgMemOnly:
@@ -1132,7 +1130,7 @@ static unsigned getEncodedComdatSelectionKind(const Comdat &C) {
     return bitc::COMDAT_SELECTION_KIND_EXACT_MATCH;
   case Comdat::Largest:
     return bitc::COMDAT_SELECTION_KIND_LARGEST;
-  case Comdat::NoDeduplicate:
+  case Comdat::NoDuplicates:
     return bitc::COMDAT_SELECTION_KIND_NO_DUPLICATES;
   case Comdat::SameSize:
     return bitc::COMDAT_SELECTION_KIND_SAME_SIZE;
@@ -1686,6 +1684,8 @@ void ModuleBitcodeWriter::writeDIDerivedType(const DIDerivedType *N,
     Record.push_back(*DWARFAddressSpace + 1);
   else
     Record.push_back(0);
+  if (auto PtrAuthData = N->getPtrAuthData())
+    Record.push_back(PtrAuthData->Payload.RawData);
 
   Stream.EmitRecord(bitc::METADATA_DERIVED_TYPE, Record, Abbrev);
   Record.clear();

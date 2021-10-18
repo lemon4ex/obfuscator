@@ -233,6 +233,8 @@ protected:
 
   unsigned ARMCDECoprocMask : 8;
 
+  unsigned PointerAuthSupported : 1;
+
   unsigned MaxOpenCLWorkGroupSize;
 
   // TargetInfo Constructor.  Default initializes all fields.
@@ -1343,6 +1345,14 @@ public:
     return TLSSupported;
   }
 
+  /// \brief Whether the target supports pointer authentication at all.
+  ///
+  /// Whether pointer authentication is actually being used is determined
+  /// by the language option.
+  bool isPointerAuthSupported() const {
+    return PointerAuthSupported;
+  }
+
   /// Return the maximum alignment (in bits) of a TLS variable
   ///
   /// Gets the maximum alignment (in bits) of a TLS variable on this target.
@@ -1384,6 +1394,11 @@ public:
 
   const LangASMap &getAddressSpaceMap() const { return *AddrSpaceMap; }
 
+  /// Determine whether the given pointer-authentication key is valid.
+  ///
+  /// The value has been coerced to type 'int'.
+  virtual bool validatePointerAuthKey(const llvm::APSInt &value) const;
+
   /// Map from the address space field in builtin description strings to the
   /// language address space.
   virtual LangAS getOpenCLBuiltinAddressSpace(unsigned AS) const {
@@ -1424,9 +1439,6 @@ public:
   /// Whether the option -fextend-arguments={32,64} is supported on the target.
   virtual bool supportsExtendIntArgs() const { return false; }
 
-  /// Controls if __arithmetic_fence is supported in the targeted backend.
-  virtual bool checkArithmeticFenceSupported() const { return false; }
-
   /// Gets the default calling convention for the given target and
   /// declaration context.
   virtual CallingConv getDefaultCallingConv() const {
@@ -1463,6 +1475,18 @@ public:
   };
 
   virtual CallingConvKind getCallingConvKind(bool ClangABICompat4) const;
+
+  /// \brief Is the Swift async calling convention supported for this target.
+  bool isSwiftAsyncCCSupported() const {
+    auto &triple = getTriple();
+    return triple.getArch() == llvm::Triple::x86_64 ||
+           triple.isARM() ||
+           triple.isAArch64();
+  }
+
+  CallingConvCheckResult checkSwiftAsyncCCSupported() const {
+    return isSwiftAsyncCCSupported() ? CCCR_OK : CCCR_Error;
+  }
 
   /// Controls if __builtin_longjmp / __builtin_setjmp can be lowered to
   /// llvm.eh.sjlj.longjmp / llvm.eh.sjlj.setjmp.

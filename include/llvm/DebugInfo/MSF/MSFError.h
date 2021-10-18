@@ -11,6 +11,8 @@
 
 #include "llvm/Support/Error.h"
 
+#include <string>
+
 namespace llvm {
 namespace msf {
 enum class msf_error_code {

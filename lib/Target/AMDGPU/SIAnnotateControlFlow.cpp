@@ -100,7 +100,6 @@ public:
     AU.addRequired<LoopInfoWrapperPass>();
     AU.addRequired<DominatorTreeWrapperPass>();
     AU.addRequired<LegacyDivergenceAnalysis>();
-    AU.addPreserved<LoopInfoWrapperPass>();
     AU.addPreserved<DominatorTreeWrapperPass>();
     AU.addRequired<TargetPassConfig>();
     FunctionPass::getAnalysisUsage(AU);

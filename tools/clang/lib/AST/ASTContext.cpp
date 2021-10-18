@@ -40,6 +40,7 @@
 #include "clang/AST/ParentMapContext.h"
 #include "clang/AST/RawCommentList.h"
 #include "clang/AST/RecordLayout.h"
+#include "clang/AST/StableHash.h"
 #include "clang/AST/Stmt.h"
 #include "clang/AST/TemplateBase.h"
 #include "clang/AST/TemplateName.h"
@@ -966,7 +967,7 @@ static bool isAddrSpaceMapManglingEnabled(const TargetInfo &TI,
 
 ASTContext::ASTContext(LangOptions &LOpts, SourceManager &SM,
                        IdentifierTable &idents, SelectorTable &sels,
-                       Builtin::Context &builtins, TranslationUnitKind TUKind)
+                       Builtin::Context &builtins)
     : ConstantArrayTypes(this_()), FunctionProtoTypes(this_()),
       TemplateSpecializationTypes(this_()),
       DependentTemplateSpecializationTypes(this_()), AutoTypes(this_()),
@@ -978,10 +979,11 @@ ASTContext::ASTContext(LangOptions &LOpts, SourceManager &SM,
                                         LangOpts.XRayAttrListFiles, SM)),
       ProfList(new ProfileList(LangOpts.ProfileListFiles, SM)),
       PrintingPolicy(LOpts), Idents(idents), Selectors(sels),
-      BuiltinInfo(builtins), TUKind(TUKind), DeclarationNames(*this),
-      Comments(SM), CommentCommandTraits(BumpAlloc, LOpts.CommentOpts),
+      BuiltinInfo(builtins), DeclarationNames(*this), Comments(SM),
+      CommentCommandTraits(BumpAlloc, LOpts.CommentOpts),
       CompCategories(this_()), LastSDM(nullptr, 0) {
-  addTranslationUnitDecl();
+  TUDecl = TranslationUnitDecl::Create(*this);
+  TraversalScope = {TUDecl};
 }
 
 ASTContext::~ASTContext() {
@@ -1195,10 +1197,9 @@ ExternCContextDecl *ASTContext::getExternCContextDecl() const {
 BuiltinTemplateDecl *
 ASTContext::buildBuiltinTemplateDecl(BuiltinTemplateKind BTK,
                                      const IdentifierInfo *II) const {
-  auto *BuiltinTemplate =
-      BuiltinTemplateDecl::Create(*this, getTranslationUnitDecl(), II, BTK);
+  auto *BuiltinTemplate = BuiltinTemplateDecl::Create(*this, TUDecl, II, BTK);
   BuiltinTemplate->setImplicit();
-  getTranslationUnitDecl()->addDecl(BuiltinTemplate);
+  TUDecl->addDecl(BuiltinTemplate);
 
   return BuiltinTemplate;
 }
@@ -1485,7 +1486,7 @@ void ASTContext::InitBuiltinTypes(const TargetInfo &Target,
   // MSVC predeclares struct _GUID, and we need it to create MSGuidDecls.
   if (LangOpts.MicrosoftExt || LangOpts.Borland) {
     MSGuidTagDecl = buildImplicitRecord("_GUID");
-    getTranslationUnitDecl()->addDecl(MSGuidTagDecl);
+    TUDecl->addDecl(MSGuidTagDecl);
   }
 }
 
@@ -3008,6 +3009,16 @@ QualType ASTContext::removeAddrSpaceQualType(QualType T) const {
     return QualType(TypeNode, Quals.getFastQualifiers());
 }
 
+uint16_t ASTContext::getPointerAuthTypeDiscriminator(QualType T) {
+  assert(!T->isDependentType() &&
+         "cannot compute type discriminator of a dependent type");
+  SmallString<256> Str;
+  llvm::raw_svector_ostream Out(Str);
+  std::unique_ptr<MangleContext> MC(createMangleContext());
+  MC->mangleTypeName(T, Out);
+  return getPointerAuthStringDiscriminator(*this, Str.c_str());
+}
+
 QualType ASTContext::getObjCGCQualType(QualType T,
                                        Qualifiers::GC GCAttr) const {
   QualType CanT = getCanonicalType(T);
@@ -3869,7 +3880,7 @@ ASTContext::getBuiltinVectorTypeInfo(const BuiltinType *Ty) const {
             llvm::ElementCount::getScalable(NumEls), NF};
 #define RVV_VECTOR_TYPE_FLOAT(Name, Id, SingletonId, NumEls, ElBits, NF)       \
   case BuiltinType::Id:                                                        \
-    return {ElBits == 16 ? Float16Ty : (ElBits == 32 ? FloatTy : DoubleTy),    \
+    return {ElBits == 16 ? HalfTy : (ElBits == 32 ? FloatTy : DoubleTy),       \
             llvm::ElementCount::getScalable(NumEls), NF};
 #define RVV_PREDICATE_TYPE(Name, Id, SingletonId, NumEls)                      \
   case BuiltinType::Id:                                                        \
@@ -5181,10 +5192,6 @@ ASTContext::applyObjCProtocolQualifiers(QualType type,
                   bool allowOnPointerType) const {
   hasError = false;
 
-  if (const auto *objT = dyn_cast<ObjCTypeParamType>(type.getTypePtr())) {
-    return getObjCTypeParamType(objT->getDecl(), protocols);
-  }
-
   // Apply protocol qualifiers to ObjCObjectPointerType.
   if (allowOnPointerType) {
     if (const auto *objPtr =
@@ -5281,11 +5288,13 @@ void ASTContext::adjustObjCTypeParamBoundType(const ObjCTypeParamDecl *Orig,
                                               ObjCTypeParamDecl *New) const {
   New->setTypeSourceInfo(getTrivialTypeSourceInfo(Orig->getUnderlyingType()));
   // Update TypeForDecl after updating TypeSourceInfo.
-  auto NewTypeParamTy = cast<ObjCTypeParamType>(New->getTypeForDecl());
-  SmallVector<ObjCProtocolDecl *, 8> protocols;
-  protocols.append(NewTypeParamTy->qual_begin(), NewTypeParamTy->qual_end());
-  QualType UpdatedTy = getObjCTypeParamType(New, protocols);
-  New->setTypeForDecl(UpdatedTy.getTypePtr());
+  if (const Type *TypeForDecl = New->getTypeForDecl()) {
+    auto NewTypeParamTy = cast<ObjCTypeParamType>(TypeForDecl);
+    SmallVector<ObjCProtocolDecl *, 8> protocols;
+    protocols.append(NewTypeParamTy->qual_begin(), NewTypeParamTy->qual_end());
+    QualType UpdatedTy = getObjCTypeParamType(New, protocols);
+    New->setTypeForDecl(UpdatedTy.getTypePtr());
+  }
 }
 
 /// ObjCObjectAdoptsQTypeProtocols - Checks that protocols in IC's
@@ -6066,11 +6075,9 @@ ASTContext::getCanonicalNestedNameSpecifier(NestedNameSpecifier *NNS) const {
                                     NNS->getAsNamespaceAlias()->getNamespace()
                                                       ->getOriginalNamespace());
 
-  // The difference between TypeSpec and TypeSpecWithTemplate is that the
-  // latter will have the 'template' keyword when printed.
   case NestedNameSpecifier::TypeSpec:
   case NestedNameSpecifier::TypeSpecWithTemplate: {
-    const Type *T = getCanonicalType(NNS->getAsType());
+    QualType T = getCanonicalType(QualType(NNS->getAsType(), 0));
 
     // If we have some kind of dependent-named type (e.g., "typename T::type"),
     // break it apart into its prefix and identifier, then reconsititute those
@@ -6080,16 +6087,14 @@ ASTContext::getCanonicalNestedNameSpecifier(NestedNameSpecifier *NNS) const {
     //   typedef typename T::type T1;
     //   typedef typename T1::type T2;
     if (const auto *DNT = T->getAs<DependentNameType>())
-      return NestedNameSpecifier::Create(
-          *this, DNT->getQualifier(),
-          const_cast<IdentifierInfo *>(DNT->getIdentifier()));
-    if (const auto *DTST = T->getAs<DependentTemplateSpecializationType>())
-      return NestedNameSpecifier::Create(*this, DTST->getQualifier(), true,
-                                         const_cast<Type *>(T));
+      return NestedNameSpecifier::Create(*this, DNT->getQualifier(),
+                           const_cast<IdentifierInfo *>(DNT->getIdentifier()));
 
-    // TODO: Set 'Template' parameter to true for other template types.
+    // Otherwise, just canonicalize the type, and force it to be a TypeSpec.
+    // FIXME: Why are TypeSpec and TypeSpecWithTemplate distinct in the
+    // first place?
     return NestedNameSpecifier::Create(*this, nullptr, false,
-                                       const_cast<Type *>(T));
+                                       const_cast<Type *>(T.getTypePtr()));
   }
 
   case NestedNameSpecifier::Global:
@@ -6626,7 +6631,7 @@ QualType ASTContext::getCFConstantStringType() const {
 QualType ASTContext::getObjCSuperType() const {
   if (ObjCSuperType.isNull()) {
     RecordDecl *ObjCSuperTypeDecl = buildImplicitRecord("objc_super");
-    getTranslationUnitDecl()->addDecl(ObjCSuperTypeDecl);
+    TUDecl->addDecl(ObjCSuperTypeDecl);
     ObjCSuperType = getTagDeclType(ObjCSuperTypeDecl);
   }
   return ObjCSuperType;
@@ -6765,6 +6770,9 @@ bool ASTContext::BlockRequiresCopying(QualType Ty,
 
     return true;
   }
+
+  if (Ty.hasAddressDiscriminatedPointerAuth())
+    return true;
 
   // The block needs copy/destroy helpers if Ty is non-trivial to destructively
   // move or destroy.
@@ -8674,14 +8682,6 @@ bool ASTContext::areCompatibleVectorTypes(QualType FirstVec,
   return false;
 }
 
-/// getSVETypeSize - Return SVE vector or predicate register size.
-static uint64_t getSVETypeSize(ASTContext &Context, const BuiltinType *Ty) {
-  assert(Ty->isVLSTBuiltinType() && "Invalid SVE Type");
-  return Ty->getKind() == BuiltinType::SveBool
-             ? Context.getLangOpts().ArmSveVectorBits / Context.getCharWidth()
-             : Context.getLangOpts().ArmSveVectorBits;
-}
-
 bool ASTContext::areCompatibleSveTypes(QualType FirstType,
                                        QualType SecondType) {
   assert(((FirstType->isSizelessBuiltinType() && SecondType->isVectorType()) ||
@@ -8699,7 +8699,7 @@ bool ASTContext::areCompatibleSveTypes(QualType FirstType,
           return VT->getElementType().getCanonicalType() ==
                  FirstType->getSveEltType(*this);
         else if (VT->getVectorKind() == VectorType::GenericVector)
-          return getTypeSize(SecondType) == getSVETypeSize(*this, BT) &&
+          return getTypeSize(SecondType) == getLangOpts().ArmSveVectorBits &&
                  hasSameType(VT->getElementType(),
                              getBuiltinVectorTypeInfo(BT).ElementType);
       }
@@ -8718,8 +8718,7 @@ bool ASTContext::areLaxCompatibleSveTypes(QualType FirstType,
          "Expected SVE builtin type and vector type!");
 
   auto IsLaxCompatible = [this](QualType FirstType, QualType SecondType) {
-    const auto *BT = FirstType->getAs<BuiltinType>();
-    if (!BT)
+    if (!FirstType->getAs<BuiltinType>())
       return false;
 
     const auto *VecTy = SecondType->getAs<VectorType>();
@@ -8729,19 +8728,13 @@ bool ASTContext::areLaxCompatibleSveTypes(QualType FirstType,
       const LangOptions::LaxVectorConversionKind LVCKind =
           getLangOpts().getLaxVectorConversions();
 
-      // Can not convert between sve predicates and sve vectors because of
-      // different size.
-      if (BT->getKind() == BuiltinType::SveBool &&
-          VecTy->getVectorKind() == VectorType::SveFixedLengthDataVector)
-        return false;
-
       // If __ARM_FEATURE_SVE_BITS != N do not allow GNU vector lax conversion.
       // "Whenever __ARM_FEATURE_SVE_BITS==N, GNUT implicitly
       // converts to VLAT and VLAT implicitly converts to GNUT."
       // ACLE Spec Version 00bet6, 3.7.3.2. Behavior common to vectors and
       // predicates.
       if (VecTy->getVectorKind() == VectorType::GenericVector &&
-          getTypeSize(SecondType) != getSVETypeSize(*this, BT))
+          getTypeSize(SecondType) != getLangOpts().ArmSveVectorBits)
         return false;
 
       // If -flax-vector-conversions=all is specified, the types are
@@ -9653,19 +9646,11 @@ static QualType mergeEnumWithInteger(ASTContext &Context, const EnumType *ET,
 QualType ASTContext::mergeTypes(QualType LHS, QualType RHS,
                                 bool OfBlockPointer,
                                 bool Unqualified, bool BlockReturnType) {
-  // For C++ we will not reach this code with reference types (see below),
-  // for OpenMP variant call overloading we might.
-  //
   // C++ [expr]: If an expression initially has the type "reference to T", the
   // type is adjusted to "T" prior to any further analysis, the expression
   // designates the object or function denoted by the reference, and the
   // expression is an lvalue unless the reference is an rvalue reference and
   // the expression is a function call (possibly inside parentheses).
-  if (LangOpts.OpenMP && LHS->getAs<ReferenceType>() &&
-      RHS->getAs<ReferenceType>() && LHS->getTypeClass() == RHS->getTypeClass())
-    return mergeTypes(LHS->getAs<ReferenceType>()->getPointeeType(),
-                      RHS->getAs<ReferenceType>()->getPointeeType(),
-                      OfBlockPointer, Unqualified, BlockReturnType);
   if (LHS->getAs<ReferenceType>() || RHS->getAs<ReferenceType>())
     return {};
 
@@ -9690,6 +9675,7 @@ QualType ASTContext::mergeTypes(QualType LHS, QualType RHS,
     if (LQuals.getCVRQualifiers() != RQuals.getCVRQualifiers() ||
         LQuals.getAddressSpace() != RQuals.getAddressSpace() ||
         LQuals.getObjCLifetime() != RQuals.getObjCLifetime() ||
+        LQuals.getPointerAuth() != RQuals.getPointerAuth() ||
         LQuals.hasUnaligned() != RQuals.hasUnaligned())
       return {};
 
@@ -10397,11 +10383,6 @@ static QualType DecodeTypeFromStr(const char *&Str, const ASTContext &Context,
   // Read the base type.
   switch (*Str++) {
   default: llvm_unreachable("Unknown builtin type letter!");
-  case 'x':
-    assert(HowLong == 0 && !Signed && !Unsigned &&
-           "Bad modifiers used with 'x'!");
-    Type = Context.Float16Ty;
-    break;
   case 'y':
     assert(HowLong == 0 && !Signed && !Unsigned &&
            "Bad modifiers used with 'y'!");

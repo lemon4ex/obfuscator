@@ -750,13 +750,6 @@ private:
   /// added to the global preprocessing entity ID to produce a local ID.
   GlobalPreprocessedEntityMapType GlobalPreprocessedEntityMap;
 
-  using GlobalSkippedRangeMapType =
-      ContinuousRangeMap<unsigned, ModuleFile *, 4>;
-
-  /// Mapping from global skipped range base IDs to the module in which
-  /// the skipped ranges reside.
-  GlobalSkippedRangeMapType GlobalSkippedRangeMap;
-
   /// \name CodeGen-relevant special data
   /// Fields containing data that is relevant to CodeGen.
   //@{
@@ -1344,6 +1337,8 @@ private:
                                      ASTReaderListener &Listener);
   static bool ParseHeaderSearchOptions(const RecordData &Record, bool Complain,
                                        ASTReaderListener &Listener);
+  static bool ParseHeaderSearchPaths(const RecordData &Record, bool Complain,
+                                     ASTReaderListener &Listener);
   static bool ParsePreprocessorOptions(const RecordData &Record, bool Complain,
                                        ASTReaderListener &Listener,
                                        std::string &SuggestedPredefines);
@@ -1400,9 +1395,6 @@ private:
   /// particular module.
   llvm::iterator_range<PreprocessingRecord::iterator>
   getModulePreprocessedEntities(ModuleFile &Mod) const;
-
-  bool canRecoverFromOutOfDate(StringRef ModuleFileName,
-                               unsigned ClientLoadCapabilities);
 
 public:
   class ModuleDeclIterator
@@ -1742,9 +1734,6 @@ public:
   /// entity with index \p Index came from file \p FID.
   Optional<bool> isPreprocessedEntityInFileID(unsigned Index,
                                               FileID FID) override;
-
-  /// Read a preallocated skipped range from the external source.
-  SourceRange ReadSkippedRange(unsigned Index) override;
 
   /// Read the header file information for the given file entry.
   HeaderFileInfo GetHeaderFileInfo(const FileEntry *FE) override;
@@ -2139,15 +2128,12 @@ public:
 
   /// Read a source location from raw form and return it in its
   /// originating module file's source location space.
-  SourceLocation
-  ReadUntranslatedSourceLocation(SourceLocation::UIntTy Raw) const {
-    return SourceLocation::getFromRawEncoding((Raw >> 1) |
-                                              (Raw << (8 * sizeof(Raw) - 1)));
+  SourceLocation ReadUntranslatedSourceLocation(uint32_t Raw) const {
+    return SourceLocation::getFromRawEncoding((Raw >> 1) | (Raw << 31));
   }
 
   /// Read a source location from raw form.
-  SourceLocation ReadSourceLocation(ModuleFile &ModuleFile,
-                                    SourceLocation::UIntTy Raw) const {
+  SourceLocation ReadSourceLocation(ModuleFile &ModuleFile, uint32_t Raw) const {
     SourceLocation Loc = ReadUntranslatedSourceLocation(Raw);
     return TranslateSourceLocation(ModuleFile, Loc);
   }
@@ -2161,8 +2147,7 @@ public:
     assert(ModuleFile.SLocRemap.find(Loc.getOffset()) !=
                ModuleFile.SLocRemap.end() &&
            "Cannot find offset to remap.");
-    SourceLocation::IntTy Remap =
-        ModuleFile.SLocRemap.find(Loc.getOffset())->second;
+    int Remap = ModuleFile.SLocRemap.find(Loc.getOffset())->second;
     return Loc.getLocWithOffset(Remap);
   }
 

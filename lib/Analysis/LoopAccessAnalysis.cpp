@@ -170,10 +170,8 @@ const SCEV *llvm::replaceSymbolicStrideSCEV(PredicatedScalarEvolution &PSE,
 
 RuntimeCheckingPtrGroup::RuntimeCheckingPtrGroup(
     unsigned Index, RuntimePointerChecking &RtCheck)
-    : High(RtCheck.Pointers[Index].End), Low(RtCheck.Pointers[Index].Start),
-      AddressSpace(RtCheck.Pointers[Index]
-                       .PointerValue->getType()
-                       ->getPointerAddressSpace()) {
+    : RtCheck(RtCheck), High(RtCheck.Pointers[Index].End),
+      Low(RtCheck.Pointers[Index].Start) {
   Members.push_back(Index);
 }
 
@@ -201,9 +199,9 @@ void RuntimePointerChecking::insert(Loop *Lp, Value *Ptr, bool WritePtr,
   const SCEV *ScStart;
   const SCEV *ScEnd;
 
-  if (SE->isLoopInvariant(Sc, Lp)) {
+  if (SE->isLoopInvariant(Sc, Lp))
     ScStart = ScEnd = Sc;
-  } else {
+  else {
     const SCEVAddRecExpr *AR = dyn_cast<SCEVAddRecExpr>(Sc);
     assert(AR && "Invalid addrec expression");
     const SCEV *Ex = PSE.getBackedgeTakenCount();
@@ -224,13 +222,13 @@ void RuntimePointerChecking::insert(Loop *Lp, Value *Ptr, bool WritePtr,
       ScStart = SE->getUMinExpr(ScStart, ScEnd);
       ScEnd = SE->getUMaxExpr(AR->getStart(), ScEnd);
     }
+    // Add the size of the pointed element to ScEnd.
+    auto &DL = Lp->getHeader()->getModule()->getDataLayout();
+    Type *IdxTy = DL.getIndexType(Ptr->getType());
+    const SCEV *EltSizeSCEV =
+        SE->getStoreSizeOfExpr(IdxTy, Ptr->getType()->getPointerElementType());
+    ScEnd = SE->getAddExpr(ScEnd, EltSizeSCEV);
   }
-  // Add the size of the pointed element to ScEnd.
-  auto &DL = Lp->getHeader()->getModule()->getDataLayout();
-  Type *IdxTy = DL.getIndexType(Ptr->getType());
-  const SCEV *EltSizeSCEV =
-      SE->getStoreSizeOfExpr(IdxTy, Ptr->getType()->getPointerElementType());
-  ScEnd = SE->getAddExpr(ScEnd, EltSizeSCEV);
 
   Pointers.emplace_back(Ptr, ScStart, ScEnd, WritePtr, DepSetId, ASId, Sc);
 }
@@ -281,28 +279,18 @@ static const SCEV *getMinFromExprs(const SCEV *I, const SCEV *J,
   return I;
 }
 
-bool RuntimeCheckingPtrGroup::addPointer(unsigned Index,
-                                         RuntimePointerChecking &RtCheck) {
-  return addPointer(
-      Index, RtCheck.Pointers[Index].Start, RtCheck.Pointers[Index].End,
-      RtCheck.Pointers[Index].PointerValue->getType()->getPointerAddressSpace(),
-      *RtCheck.SE);
-}
-
-bool RuntimeCheckingPtrGroup::addPointer(unsigned Index, const SCEV *Start,
-                                         const SCEV *End, unsigned AS,
-                                         ScalarEvolution &SE) {
-  assert(AddressSpace == AS &&
-         "all pointers in a checking group must be in the same address space");
+bool RuntimeCheckingPtrGroup::addPointer(unsigned Index) {
+  const SCEV *Start = RtCheck.Pointers[Index].Start;
+  const SCEV *End = RtCheck.Pointers[Index].End;
 
   // Compare the starts and ends with the known minimum and maximum
   // of this set. We need to know how we compare against the min/max
   // of the set in order to be able to emit memchecks.
-  const SCEV *Min0 = getMinFromExprs(Start, Low, &SE);
+  const SCEV *Min0 = getMinFromExprs(Start, Low, RtCheck.SE);
   if (!Min0)
     return false;
 
-  const SCEV *Min1 = getMinFromExprs(End, High, &SE);
+  const SCEV *Min1 = getMinFromExprs(End, High, RtCheck.SE);
   if (!Min1)
     return false;
 
@@ -422,7 +410,7 @@ void RuntimePointerChecking::groupChecks(
 
         TotalComparisons++;
 
-        if (Group.addPointer(Pointer, *this)) {
+        if (Group.addPointer(Pointer)) {
           Merged = true;
           break;
         }
@@ -1526,8 +1514,7 @@ MemoryDepChecker::isDependent(const MemAccessInfo &A, unsigned AIdx,
   uint64_t Stride = std::abs(StrideAPtr);
   const SCEVConstant *C = dyn_cast<SCEVConstant>(Dist);
   if (!C) {
-    if (!isa<SCEVCouldNotCompute>(Dist) &&
-        TypeByteSize == DL.getTypeAllocSize(BTy) &&
+    if (TypeByteSize == DL.getTypeAllocSize(BTy) &&
         isSafeDependenceDistance(DL, *(PSE.getSE()),
                                  *(PSE.getBackedgeTakenCount()), *Dist, Stride,
                                  TypeByteSize))

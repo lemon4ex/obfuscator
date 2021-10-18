@@ -17,11 +17,11 @@
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/ExecutionEngine/Orc/Core.h"
-#include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
 #include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
-#include "llvm/ExecutionEngine/Orc/OrcRPCExecutorProcessControl.h"
+#include "llvm/ExecutionEngine/Orc/OrcRPCTargetProcessControl.h"
 #include "llvm/ExecutionEngine/Orc/Shared/FDRawByteChannel.h"
 #include "llvm/ExecutionEngine/Orc/Shared/RPCUtils.h"
+#include "llvm/ExecutionEngine/Orc/TargetProcessControl.h"
 #include "llvm/ExecutionEngine/RuntimeDyldChecker.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/Regex.h"
@@ -52,26 +52,26 @@ using LLVMJITLinkChannel = orc::shared::FDRawByteChannel;
 using LLVMJITLinkRPCEndpoint =
     orc::shared::MultiThreadedRPCEndpoint<LLVMJITLinkChannel>;
 using LLVMJITLinkRemoteMemoryAccess =
-    orc::OrcRPCEPCMemoryAccess<LLVMJITLinkRPCEndpoint>;
+    orc::OrcRPCTPCMemoryAccess<LLVMJITLinkRPCEndpoint>;
 
-class LLVMJITLinkRemoteExecutorProcessControl
-    : public orc::OrcRPCExecutorProcessControlBase<LLVMJITLinkRPCEndpoint> {
+class LLVMJITLinkRemoteTargetProcessControl
+    : public orc::OrcRPCTargetProcessControlBase<LLVMJITLinkRPCEndpoint> {
 public:
-  using BaseT = orc::OrcRPCExecutorProcessControlBase<LLVMJITLinkRPCEndpoint>;
-  static Expected<std::unique_ptr<ExecutorProcessControl>> LaunchExecutor();
+  using BaseT = orc::OrcRPCTargetProcessControlBase<LLVMJITLinkRPCEndpoint>;
+  static Expected<std::unique_ptr<TargetProcessControl>> LaunchExecutor();
 
-  static Expected<std::unique_ptr<ExecutorProcessControl>> ConnectToExecutor();
+  static Expected<std::unique_ptr<TargetProcessControl>> ConnectToExecutor();
 
   Error disconnect() override;
 
 private:
   using LLVMJITLinkRemoteMemoryAccess =
-      orc::OrcRPCEPCMemoryAccess<LLVMJITLinkRemoteExecutorProcessControl>;
+      orc::OrcRPCTPCMemoryAccess<LLVMJITLinkRemoteTargetProcessControl>;
 
-  using LLVMJITLinkRemoteMemoryManager = orc::OrcRPCEPCJITLinkMemoryManager<
-      LLVMJITLinkRemoteExecutorProcessControl>;
+  using LLVMJITLinkRemoteMemoryManager =
+      orc::OrcRPCTPCJITLinkMemoryManager<LLVMJITLinkRemoteTargetProcessControl>;
 
-  LLVMJITLinkRemoteExecutorProcessControl(
+  LLVMJITLinkRemoteTargetProcessControl(
       std::shared_ptr<orc::SymbolStringPool> SSP,
       std::unique_ptr<LLVMJITLinkChannel> Channel,
       std::unique_ptr<LLVMJITLinkRPCEndpoint> Endpoint,
@@ -89,7 +89,7 @@ private:
       }
     });
 
-    if (auto Err2 = initializeORCRPCEPCBase()) {
+    if (auto Err2 = initializeORCRPCTPCBase()) {
       Err = joinErrors(std::move(Err2), disconnect());
       return;
     }
@@ -102,15 +102,16 @@ private:
 
   std::unique_ptr<LLVMJITLinkChannel> Channel;
   std::unique_ptr<LLVMJITLinkRPCEndpoint> Endpoint;
-  std::unique_ptr<ExecutorProcessControl::MemoryAccess> OwnedMemAccess;
+  std::unique_ptr<TargetProcessControl::MemoryAccess> OwnedMemAccess;
   std::unique_ptr<jitlink::JITLinkMemoryManager> OwnedMemMgr;
   std::atomic<bool> Finished{false};
   std::thread ListenerThread;
 };
 
 struct Session {
+  std::unique_ptr<orc::TargetProcessControl> TPC;
   orc::ExecutionSession ES;
-  orc::JITDylib *MainJD = nullptr;
+  orc::JITDylib *MainJD;
   LLVMJITLinkObjectLinkingLayer ObjLayer;
   std::vector<orc::JITDylib *> JDSearchOrder;
 
@@ -155,7 +156,7 @@ struct Session {
   DenseMap<StringRef, StringRef> CanonicalWeakDefs;
 
 private:
-  Session(std::unique_ptr<orc::ExecutorProcessControl> EPC, Error &Err);
+  Session(std::unique_ptr<orc::TargetProcessControl> TPC, Error &Err);
 };
 
 /// Record symbols, GOT entries, stubs, and sections for ELF file.

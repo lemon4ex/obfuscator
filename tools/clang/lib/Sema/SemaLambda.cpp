@@ -1975,7 +1975,8 @@ ExprResult Sema::BuildBlockForLambdaConversion(SourceLocation CurrentLocation,
   CallOperator->markUsed(Context);
 
   ExprResult Init = PerformCopyInitialization(
-      InitializedEntity::InitializeLambdaToBlock(ConvLocation, Src->getType()),
+      InitializedEntity::InitializeLambdaToBlock(ConvLocation, Src->getType(),
+                                                 /*NRVO=*/false),
       CurrentLocation, Src);
   if (!Init.isInvalid())
     Init = ActOnFinishFullExpr(Init.get(), /*DiscardedValue*/ false);

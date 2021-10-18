@@ -956,22 +956,22 @@ static bool optimizeCallInst(CallInst *CI, bool &ModifiedDT,
       scalarizeMaskedStore(DL, CI, DTU, ModifiedDT);
       return true;
     case Intrinsic::masked_gather: {
-      MaybeAlign MA =
-          cast<ConstantInt>(CI->getArgOperand(1))->getMaybeAlignValue();
+      unsigned AlignmentInt =
+          cast<ConstantInt>(CI->getArgOperand(1))->getZExtValue();
       Type *LoadTy = CI->getType();
-      Align Alignment = DL.getValueOrABITypeAlignment(MA,
-                                                      LoadTy->getScalarType());
+      Align Alignment =
+          DL.getValueOrABITypeAlignment(MaybeAlign(AlignmentInt), LoadTy);
       if (TTI.isLegalMaskedGather(LoadTy, Alignment))
         return false;
       scalarizeMaskedGather(DL, CI, DTU, ModifiedDT);
       return true;
     }
     case Intrinsic::masked_scatter: {
-      MaybeAlign MA =
-          cast<ConstantInt>(CI->getArgOperand(2))->getMaybeAlignValue();
+      unsigned AlignmentInt =
+          cast<ConstantInt>(CI->getArgOperand(2))->getZExtValue();
       Type *StoreTy = CI->getArgOperand(0)->getType();
-      Align Alignment = DL.getValueOrABITypeAlignment(MA,
-                                                      StoreTy->getScalarType());
+      Align Alignment =
+          DL.getValueOrABITypeAlignment(MaybeAlign(AlignmentInt), StoreTy);
       if (TTI.isLegalMaskedScatter(StoreTy, Alignment))
         return false;
       scalarizeMaskedScatter(DL, CI, DTU, ModifiedDT);

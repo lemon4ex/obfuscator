@@ -364,17 +364,12 @@ public:
   getLocalsForAddress(object::SectionedAddress Address) override;
 
   bool isLittleEndian() const { return DObj->isLittleEndian(); }
-  static unsigned getMaxSupportedVersion() { return 5; }
   static bool isSupportedVersion(unsigned version) {
-    return version >= 2 && version <= getMaxSupportedVersion();
+    return version == 2 || version == 3 || version == 4 || version == 5;
   }
 
-  static SmallVector<uint8_t, 3> getSupportedAddressSizes() {
-    return {2, 4, 8};
-  }
   static bool isAddressSizeSupported(unsigned AddressSize) {
-    return llvm::any_of(getSupportedAddressSizes(),
-                        [=](auto Elem) { return Elem == AddressSize; });
+    return AddressSize == 2 || AddressSize == 4 || AddressSize == 8;
   }
 
   std::shared_ptr<DWARFContext> getDWOContext(StringRef AbsolutePath);

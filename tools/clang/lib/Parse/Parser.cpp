@@ -68,6 +68,11 @@ Parser::Parser(Preprocessor &pp, Sema &actions, bool skipFunctionBodies)
   PP.addCommentHandler(CommentSemaHandler.get());
 
   PP.setCodeCompletionHandler(*this);
+
+  Actions.ParseTypeFromStringCallback =
+    [this](StringRef typeStr, StringRef context, SourceLocation includeLoc) {
+      return this->parseTypeFromString(typeStr, context, includeLoc);
+    };
 }
 
 DiagnosticBuilder Parser::Diag(SourceLocation Loc, unsigned DiagID) {
@@ -309,7 +314,6 @@ bool Parser::SkipUntil(ArrayRef<tok::TokenKind> Toks, SkipUntilFlags Flags) {
       return false;
 
     case tok::annot_pragma_openmp:
-    case tok::annot_attr_openmp:
     case tok::annot_pragma_openmp_end:
       // Stop before an OpenMP pragma boundary.
       if (OpenMPDirectiveParsing)
@@ -452,6 +456,9 @@ Parser::ParseScopeFlags::~ParseScopeFlags() {
 //===----------------------------------------------------------------------===//
 
 Parser::~Parser() {
+  // Clear out the parse-type-from-string callback.
+  Actions.ParseTypeFromStringCallback = nullptr;
+
   // If we still have scopes active, delete the scope tree.
   delete getCurScope();
   Actions.CurScope = nullptr;
@@ -799,7 +806,6 @@ Parser::ParseExternalDeclaration(ParsedAttributesWithRange &attrs,
   case tok::annot_pragma_opencl_extension:
     HandlePragmaOpenCLExtension();
     return nullptr;
-  case tok::annot_attr_openmp:
   case tok::annot_pragma_openmp: {
     AccessSpecifier AS = AS_none;
     return ParseOpenMPDeclarativeDirectiveWithExtDecl(AS, attrs);
@@ -1216,7 +1222,7 @@ Decl *Parser::ParseFunctionDefinition(ParsingDeclarator &D,
   // a definition.  Late parsed attributes are checked at the end.
   if (Tok.isNot(tok::equal)) {
     for (const ParsedAttr &AL : D.getAttributes())
-      if (AL.isKnownToGCC() && !AL.isStandardAttributeSyntax())
+      if (AL.isKnownToGCC() && !AL.isCXX11Attribute())
         Diag(AL.getLoc(), diag::warn_attribute_on_function_definition) << AL;
   }
 

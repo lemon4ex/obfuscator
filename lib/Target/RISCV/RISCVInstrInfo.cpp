@@ -432,16 +432,16 @@ void RISCVInstrInfo::movImm(MachineBasicBlock &MBB,
                             MachineInstr::MIFlag Flag) const {
   MachineFunction *MF = MBB.getParent();
   MachineRegisterInfo &MRI = MF->getRegInfo();
+  bool IsRV64 = MF->getSubtarget<RISCVSubtarget>().is64Bit();
   Register SrcReg = RISCV::X0;
   Register Result = MRI.createVirtualRegister(&RISCV::GPRRegClass);
   unsigned Num = 0;
 
-  if (!STI.is64Bit() && !isInt<32>(Val))
+  if (!IsRV64 && !isInt<32>(Val))
     report_fatal_error("Should only materialize 32-bit constants for RV32");
 
-  RISCVMatInt::InstSeq Seq =
-      RISCVMatInt::generateInstSeq(Val, STI.getFeatureBits());
-  assert(!Seq.empty());
+  RISCVMatInt::InstSeq Seq = RISCVMatInt::generateInstSeq(Val, IsRV64);
+  assert(Seq.size() > 0);
 
   for (RISCVMatInt::Inst &Inst : Seq) {
     // Write the final result to DstReg if it's the last instruction in the Seq.
@@ -452,11 +452,6 @@ void RISCVInstrInfo::movImm(MachineBasicBlock &MBB,
     if (Inst.Opc == RISCV::LUI) {
       BuildMI(MBB, MBBI, DL, get(RISCV::LUI), Result)
           .addImm(Inst.Imm)
-          .setMIFlag(Flag);
-    } else if (Inst.Opc == RISCV::ADDUW) {
-      BuildMI(MBB, MBBI, DL, get(RISCV::ADDUW), Result)
-          .addReg(SrcReg, RegState::Kill)
-          .addReg(RISCV::X0)
           .setMIFlag(Flag);
     } else {
       BuildMI(MBB, MBBI, DL, get(Inst.Opc), Result)
@@ -1223,7 +1218,7 @@ bool RISCVInstrInfo::findCommutedOpIndices(const MachineInstr &MI,
         // Both of operands are not fixed. Set one of commutable
         // operands to the tied source.
         CommutableOpIdx1 = 1;
-      } else if (SrcOpIdx1 == CommuteAnyOperandIndex) {
+      } else if (SrcOpIdx1 == CommutableOpIdx1) {
         // Only one of the operands is not fixed.
         CommutableOpIdx1 = SrcOpIdx2;
       }
@@ -1467,8 +1462,7 @@ Register RISCVInstrInfo::getVLENFactoredAmount(MachineFunction &MF,
                                                MachineBasicBlock &MBB,
                                                MachineBasicBlock::iterator II,
                                                const DebugLoc &DL,
-                                               int64_t Amount,
-                                               MachineInstr::MIFlag Flag) const {
+                                               int64_t Amount) const {
   assert(Amount > 0 && "There is no need to get VLEN scaled value.");
   assert(Amount % 8 == 0 &&
          "Reserve the stack by the multiple of one vector size.");
@@ -1478,8 +1472,7 @@ Register RISCVInstrInfo::getVLENFactoredAmount(MachineFunction &MF,
   int64_t NumOfVReg = Amount / 8;
 
   Register VL = MRI.createVirtualRegister(&RISCV::GPRRegClass);
-  BuildMI(MBB, II, DL, TII->get(RISCV::PseudoReadVLENB), VL)
-    .setMIFlag(Flag);
+  BuildMI(MBB, II, DL, TII->get(RISCV::PseudoReadVLENB), VL);
   assert(isInt<32>(NumOfVReg) &&
          "Expect the number of vector registers within 32-bits.");
   if (isPowerOf2_32(NumOfVReg)) {
@@ -1488,48 +1481,40 @@ Register RISCVInstrInfo::getVLENFactoredAmount(MachineFunction &MF,
       return VL;
     BuildMI(MBB, II, DL, TII->get(RISCV::SLLI), VL)
         .addReg(VL, RegState::Kill)
-        .addImm(ShiftAmount)
-        .setMIFlag(Flag);
+        .addImm(ShiftAmount);
   } else if (isPowerOf2_32(NumOfVReg - 1)) {
     Register ScaledRegister = MRI.createVirtualRegister(&RISCV::GPRRegClass);
     uint32_t ShiftAmount = Log2_32(NumOfVReg - 1);
     BuildMI(MBB, II, DL, TII->get(RISCV::SLLI), ScaledRegister)
         .addReg(VL)
-        .addImm(ShiftAmount)
-        .setMIFlag(Flag);
+        .addImm(ShiftAmount);
     BuildMI(MBB, II, DL, TII->get(RISCV::ADD), VL)
         .addReg(ScaledRegister, RegState::Kill)
-        .addReg(VL, RegState::Kill)
-        .setMIFlag(Flag);
+        .addReg(VL, RegState::Kill);
   } else if (isPowerOf2_32(NumOfVReg + 1)) {
     Register ScaledRegister = MRI.createVirtualRegister(&RISCV::GPRRegClass);
     uint32_t ShiftAmount = Log2_32(NumOfVReg + 1);
     BuildMI(MBB, II, DL, TII->get(RISCV::SLLI), ScaledRegister)
         .addReg(VL)
-        .addImm(ShiftAmount)
-        .setMIFlag(Flag);
+        .addImm(ShiftAmount);
     BuildMI(MBB, II, DL, TII->get(RISCV::SUB), VL)
         .addReg(ScaledRegister, RegState::Kill)
-        .addReg(VL, RegState::Kill)
-        .setMIFlag(Flag);
+        .addReg(VL, RegState::Kill);
   } else {
     Register N = MRI.createVirtualRegister(&RISCV::GPRRegClass);
     if (!isInt<12>(NumOfVReg))
       movImm(MBB, II, DL, N, NumOfVReg);
-    else {
+    else
       BuildMI(MBB, II, DL, TII->get(RISCV::ADDI), N)
           .addReg(RISCV::X0)
-          .addImm(NumOfVReg)
-          .setMIFlag(Flag);
-    }
+          .addImm(NumOfVReg);
     if (!MF.getSubtarget<RISCVSubtarget>().hasStdExtM())
       MF.getFunction().getContext().diagnose(DiagnosticInfoUnsupported{
           MF.getFunction(),
           "M-extension must be enabled to calculate the vscaled size/offset."});
     BuildMI(MBB, II, DL, TII->get(RISCV::MUL), VL)
         .addReg(VL, RegState::Kill)
-        .addReg(N, RegState::Kill)
-        .setMIFlag(Flag);
+        .addReg(N, RegState::Kill);
   }
 
   return VL;

@@ -204,13 +204,8 @@ public:
   /// tracking.
   KnownBits sextInReg(unsigned SrcBitWidth) const;
 
-  /// Insert the bits from a smaller known bits starting at bitPosition.
-  void insertBits(const KnownBits &SubBits, unsigned BitPosition) {
-    Zero.insertBits(SubBits.Zero, BitPosition);
-    One.insertBits(SubBits.One, BitPosition);
-  }
-
-  /// Return a subset of the known bits from [bitPosition,bitPosition+numBits).
+  /// Return a KnownBits with the extracted bits
+  /// [bitPosition,bitPosition+numBits).
   KnownBits extractBits(unsigned NumBits, unsigned BitPosition) const {
     return KnownBits(Zero.extractBits(NumBits, BitPosition),
                      One.extractBits(NumBits, BitPosition));
@@ -374,6 +369,18 @@ public:
 
   /// Determine if these known bits always give the same ICMP_SLE result.
   static Optional<bool> sle(const KnownBits &LHS, const KnownBits &RHS);
+
+  /// Insert the bits from a smaller known bits starting at bitPosition.
+  void insertBits(const KnownBits &SubBits, unsigned BitPosition) {
+    Zero.insertBits(SubBits.Zero, BitPosition);
+    One.insertBits(SubBits.One, BitPosition);
+  }
+
+  /// Return a subset of the known bits from [bitPosition,bitPosition+numBits).
+  KnownBits extractBits(unsigned NumBits, unsigned BitPosition) {
+    return KnownBits(Zero.extractBits(NumBits, BitPosition),
+                     One.extractBits(NumBits, BitPosition));
+  }
 
   /// Update known bits based on ANDing with RHS.
   KnownBits &operator&=(const KnownBits &RHS);

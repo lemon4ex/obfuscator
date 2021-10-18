@@ -15,13 +15,13 @@
 
 #include "Inputs/cuda.h"
 
-// DEV-DAG: @v1
+// Check device variables used by neither host nor device functioins are not kept.
+
+// DEV-NEG-NOT: @v1
 __device__ int v1;
 
-// DEV-DAG: @v2
+// DEV-NEG-NOT: @v2
 __constant__ int v2;
-
-// Check device variables used by neither host nor device functioins are not kept.
 
 // DEV-NEG-NOT: @_ZL2v3
 static __device__ int v3;

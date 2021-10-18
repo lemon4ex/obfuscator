@@ -131,7 +131,7 @@ using DiagnosticHandlerFunction = std::function<void(const DiagnosticInfo &)>;
 class DiagnosticInfoInlineAsm : public DiagnosticInfo {
 private:
   /// Optional line information. 0 if not set.
-  uint64_t LocCookie = 0;
+  unsigned LocCookie = 0;
   /// Message to be reported.
   const Twine &MsgStr;
   /// Optional origin of the problem.
@@ -149,7 +149,7 @@ public:
   /// \p MsgStr gives the message.
   /// This class does not copy \p MsgStr, therefore the reference must be valid
   /// for the whole life time of the Diagnostic.
-  DiagnosticInfoInlineAsm(uint64_t LocCookie, const Twine &MsgStr,
+  DiagnosticInfoInlineAsm(unsigned LocCookie, const Twine &MsgStr,
                           DiagnosticSeverity Severity = DS_Error)
       : DiagnosticInfo(DK_InlineAsm, Severity), LocCookie(LocCookie),
         MsgStr(MsgStr) {}
@@ -162,7 +162,7 @@ public:
   DiagnosticInfoInlineAsm(const Instruction &I, const Twine &MsgStr,
                           DiagnosticSeverity Severity = DS_Error);
 
-  uint64_t getLocCookie() const { return LocCookie; }
+  unsigned getLocCookie() const { return LocCookie; }
   const Twine &getMsgStr() const { return MsgStr; }
   const Instruction *getInstruction() const { return Instr; }
 

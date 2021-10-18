@@ -43,11 +43,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Basic/LangStandard.h"
-#include "clang/Driver/Driver.h"
 #include "clang/Driver/Options.h"
 #include "clang/Driver/Types.h"
 #include "clang/Tooling/CompilationDatabase.h"
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringExtras.h"
@@ -136,7 +134,8 @@ struct TransferableCommand {
   bool ClangCLMode;
 
   TransferableCommand(CompileCommand C)
-      : Cmd(std::move(C)), Type(guessType(Cmd.Filename)) {
+      : Cmd(std::move(C)), Type(guessType(Cmd.Filename)),
+        ClangCLMode(checkIsCLMode(Cmd.CommandLine)) {
     std::vector<std::string> OldArgs = std::move(Cmd.CommandLine);
     Cmd.CommandLine.clear();
 
@@ -146,9 +145,6 @@ struct TransferableCommand {
       SmallVector<const char *, 16> TmpArgv;
       for (const std::string &S : OldArgs)
         TmpArgv.push_back(S.c_str());
-      ClangCLMode = !TmpArgv.empty() &&
-                    driver::IsClangCL(driver::getDriverMode(
-                        TmpArgv.front(), llvm::makeArrayRef(TmpArgv).slice(1)));
       ArgList = {TmpArgv.begin(), TmpArgv.end()};
     }
 
@@ -250,6 +246,19 @@ struct TransferableCommand {
   }
 
 private:
+  // Determine whether the given command line is intended for the CL driver.
+  static bool checkIsCLMode(ArrayRef<std::string> CmdLine) {
+    // First look for --driver-mode.
+    for (StringRef S : llvm::reverse(CmdLine)) {
+      if (S.consume_front("--driver-mode="))
+        return S == "cl";
+    }
+
+    // Otherwise just check the clang executable file name.
+    return !CmdLine.empty() &&
+           llvm::sys::path::stem(CmdLine.front()).endswith_insensitive("cl");
+  }
+
   // Map the language from the --std flag to that of the -x flag.
   static types::ID toType(Language Lang) {
     switch (Lang) {

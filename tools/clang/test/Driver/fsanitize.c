@@ -247,20 +247,6 @@
 // CHECK-ASAN-GLOBALS: -cc1{{.*}}-fsanitize-address-globals-dead-stripping
 // CHECK-NO-ASAN-GLOBALS-NOT: -cc1{{.*}}-fsanitize-address-globals-dead-stripping
 
-// RUN: %clang -target x86_64-linux-gnu -fsanitize-address-outline-instrumentation %s -### 2>&1 | \
-// RUN:     FileCheck %s --check-prefix=CHECK-ASAN-OUTLINE-WARN
-// CHECK-ASAN-OUTLINE-WARN: warning: argument unused during compilation: '-fsanitize-address-outline-instrumentation'
-// RUN: %clang -target x86_64-linux-gnu -fsanitize=address -fsanitize-address-outline-instrumentation %s -### 2>&1 | \
-// RUN:     FileCheck %s --check-prefix=CHECK-ASAN-OUTLINE-OK
-// RUN: %clang -target x86_64-linux-gnu -fsanitize=address -fno-sanitize-address-outline-instrumentation -fsanitize-address-outline-instrumentation %s -### 2>&1 | \
-// RUN:     FileCheck %s --check-prefix=CHECK-ASAN-OUTLINE-OK
-// CHECK-ASAN-OUTLINE-OK: "-mllvm" "-asan-instrumentation-with-call-threshold=0"
-// RUN: %clang -target x86_64-linux-gnu -fsanitize=address -fno-sanitize-address-outline-instrumentation %s -### 2>&1 | \
-// RUN:     FileCheck %s --check-prefix=CHECK-NO-CHECK-ASAN-CALLBACK
-// RUN: %clang -target x86_64-linux-gnu -fsanitize=address -fsanitize-address-outline-instrumentation -fno-sanitize-address-outline-instrumentation %s -### 2>&1 | \
-// RUN:     FileCheck %s --check-prefix=CHECK-NO-CHECK-ASAN-CALLBACK
-// CHECK-NO-CHECK-ASAN-CALLBACK-NOT: "-mllvm" "-asan-instrumentation-with-call-threshold=0"
-
 // RUN: %clang -target x86_64-linux-gnu -fsanitize=address -fsanitize-address-use-odr-indicator %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-ASAN-ODR-INDICATOR
 // RUN: %clang_cl --target=x86_64-windows -fsanitize=address -fsanitize-address-use-odr-indicator -### -- %s 2>&1 | FileCheck %s --check-prefix=CHECK-ASAN-ODR-INDICATOR
 // CHECK-ASAN-ODR-INDICATOR: -cc1{{.*}}-fsanitize-address-use-odr-indicator
@@ -569,25 +555,25 @@
 // CHECK-MSAN-OPENBSD: unsupported option '-fsanitize=memory' for target 'i386-pc-openbsd'
 
 // RUN: %clang -target x86_64-apple-darwin -fsanitize=leak %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-LSAN-X86-64-DARWIN
-// CHECK-LSAN-X86-64-DARWIN-NOT: unsupported option
+// CHECK-LSAN-X86-64-DARWIN: unsupported option
 
 // RUN: %clang -target x86_64-apple-iossimulator -fsanitize=leak %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-LSAN-X86-64-IOSSIMULATOR
-// CHECK-LSAN-X86-64-IOSSIMULATOR-NOT: unsupported option
+// CHECK-LSAN-X86-64-IOSSIMULATOR: unsupported option
 
 // RUN: %clang -target x86_64-apple-tvossimulator -fsanitize=leak %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-LSAN-X86-64-TVOSSIMULATOR
-// CHECK-LSAN-X86-64-TVOSSIMULATOR-NOT: unsupported option
+// CHECK-LSAN-X86-64-TVOSSIMULATOR: unsupported option
 
 // RUN: %clang -target i386-apple-darwin -fsanitize=leak %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-LSAN-I386-DARWIN
-// CHECK-LSAN-I386-DARWIN-NOT: unsupported option
+// CHECK-LSAN-I386-DARWIN: unsupported option
 
 // RUN: %clang -target arm-apple-ios -fsanitize=leak %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-LSAN-ARM-IOS
-// CHECK-LSAN-ARM-IOS-NOT: unsupported option
+// CHECK-LSAN-ARM-IOS: unsupported option
 
 // RUN: %clang -target i386-apple-iossimulator -fsanitize=leak %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-LSAN-I386-IOSSIMULATOR
-// CHECK-LSAN-I386-IOSSIMULATOR-NOT: unsupported option
+// CHECK-LSAN-I386-IOSSIMULATOR: unsupported option
 
 // RUN: %clang -target i386-apple-tvossimulator -fsanitize=leak %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-LSAN-I386-TVOSSIMULATOR
-// CHECK-LSAN-I386-TVOSSIMULATOR-NOT: unsupported option
+// CHECK-LSAN-I386-TVOSSIMULATOR: unsupported option
 
 
 // RUN: %clang -target x86_64-linux-gnu -fvisibility=hidden -fsanitize=cfi -flto -c %s -### 2>&1 | FileCheck %s --check-prefix=CHECK-CFI

@@ -141,6 +141,7 @@ private:
   bool AddMissingHeaderDeps;
   bool SeenMissingHeader;
   bool IncludeModuleFiles;
+  bool SkipUnusedModuleMaps;
   DependencyOutputFormat OutputFormat;
   unsigned InputFileIndex;
 };

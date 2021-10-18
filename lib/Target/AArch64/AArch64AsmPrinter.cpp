@@ -29,6 +29,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/ADT/Twine.h"
+#include "llvm/BinaryFormat/MachO.h"
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/CodeGen/AsmPrinter.h"
@@ -43,11 +44,13 @@
 #include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/GlobalPtrAuthInfo.h"
 #include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCInst.h"
 #include "llvm/MC/MCInstBuilder.h"
 #include "llvm/MC/MCSectionELF.h"
+#include "llvm/MC/MCSectionMachO.h"
 #include "llvm/MC/MCStreamer.h"
 #include "llvm/MC/MCSymbol.h"
 #include "llvm/Support/Casting.h"
@@ -63,6 +66,16 @@
 #include <memory>
 
 using namespace llvm;
+
+enum PtrauthCheckMode { Default, Unchecked, Poison, Trap };
+static cl::opt<PtrauthCheckMode>
+PtrauthAuthChecks("aarch64-ptrauth-auth-checks", cl::Hidden,
+                  cl::values(
+                    clEnumValN(Unchecked, "none", "don't test for failure"),
+                    clEnumValN(Poison, "poison", "poison on failure"),
+                    clEnumValN(Trap, "trap", "trap on failure")),
+                  cl::desc("Check pointer authentication auth/resign failures"),
+                  cl::init(Default));
 
 #define DEBUG_TYPE "asm-printer"
 
@@ -87,6 +100,9 @@ public:
     return MCInstLowering.lowerOperand(MO, MCOp);
   }
 
+  const MCExpr *
+  lowerPtrAuthGlobalConstant(const GlobalPtrAuthInfo &PAI) override;
+
   void emitStartOfAsmFile(Module &M) override;
   void emitJumpTableInfo() override;
 
@@ -109,9 +125,9 @@ public:
   typedef std::tuple<unsigned, bool, uint32_t> HwasanMemaccessTuple;
   std::map<HwasanMemaccessTuple, MCSymbol *> HwasanMemaccessSymbols;
   void LowerHWASAN_CHECK_MEMACCESS(const MachineInstr &MI);
-  void emitHwasanMemaccessSymbols(Module &M);
+  void EmitHwasanMemaccessSymbols(Module &M);
 
-  void emitSled(const MachineInstr &MI, SledKind Kind);
+  void EmitSled(const MachineInstr &MI, SledKind Kind);
 
   /// tblgen'erated driver function for lowering simple MI->MC
   /// pseudo instructions.
@@ -178,10 +194,10 @@ private:
   AArch64FunctionInfo *AArch64FI = nullptr;
 
   /// Emit the LOHs contained in AArch64FI.
-  void emitLOHs();
+  void EmitLOHs();
 
   /// Emit instruction to set float register to zero.
-  void emitFMov0(const MachineInstr &MI);
+  void EmitFMov0(const MachineInstr &MI);
 
   using MInstToMCSymbol = std::map<const MachineInstr *, MCSymbol *>;
 
@@ -260,18 +276,21 @@ void AArch64AsmPrinter::LowerPATCHABLE_FUNCTION_ENTER(const MachineInstr &MI)
     return;
   }
 
-  emitSled(MI, SledKind::FUNCTION_ENTER);
+  EmitSled(MI, SledKind::FUNCTION_ENTER);
 }
 
-void AArch64AsmPrinter::LowerPATCHABLE_FUNCTION_EXIT(const MachineInstr &MI) {
-  emitSled(MI, SledKind::FUNCTION_EXIT);
+void AArch64AsmPrinter::LowerPATCHABLE_FUNCTION_EXIT(const MachineInstr &MI)
+{
+  EmitSled(MI, SledKind::FUNCTION_EXIT);
 }
 
-void AArch64AsmPrinter::LowerPATCHABLE_TAIL_CALL(const MachineInstr &MI) {
-  emitSled(MI, SledKind::TAIL_CALL);
+void AArch64AsmPrinter::LowerPATCHABLE_TAIL_CALL(const MachineInstr &MI)
+{
+  EmitSled(MI, SledKind::TAIL_CALL);
 }
 
-void AArch64AsmPrinter::emitSled(const MachineInstr &MI, SledKind Kind) {
+void AArch64AsmPrinter::EmitSled(const MachineInstr &MI, SledKind Kind)
+{
   static const int8_t NoopsInSledCount = 7;
   // We want to emit the following pattern:
   //
@@ -334,7 +353,7 @@ void AArch64AsmPrinter::LowerHWASAN_CHECK_MEMACCESS(const MachineInstr &MI) {
                      .addExpr(MCSymbolRefExpr::create(Sym, OutContext)));
 }
 
-void AArch64AsmPrinter::emitHwasanMemaccessSymbols(Module &M) {
+void AArch64AsmPrinter::EmitHwasanMemaccessSymbols(Module &M) {
   if (HwasanMemaccessSymbols.empty())
     return;
 
@@ -560,11 +579,39 @@ void AArch64AsmPrinter::emitHwasanMemaccessSymbols(Module &M) {
   }
 }
 
+static void
+emitAuthenticatedPointer(MCStreamer &OutStreamer, MCSymbol *StubLabel,
+                         const MachineModuleInfoMachO::AuthStubInfo &StubInfo) {
+  // L_foo$addend$auth_ptr$ib$23:
+  OutStreamer.emitLabel(StubLabel);
+  OutStreamer.emitValue(StubInfo.Pointer, /*size=*/8);
+}
+
 void AArch64AsmPrinter::emitEndOfAsmFile(Module &M) {
-  emitHwasanMemaccessSymbols(M);
+  EmitHwasanMemaccessSymbols(M);
 
   const Triple &TT = TM.getTargetTriple();
   if (TT.isOSBinFormatMachO()) {
+
+    // Output authenticated pointers as indirect symbols, if we have any.
+    MachineModuleInfoMachO &MMIMacho =
+        MMI->getObjFileInfo<MachineModuleInfoMachO>();
+
+    auto Stubs = MMIMacho.getAuthGVStubList();
+
+    if (!Stubs.empty()) {
+      // Switch to the "__auth_ptr" section.
+      OutStreamer->SwitchSection(
+          OutContext.getMachOSection("__DATA", "__auth_ptr", MachO::S_REGULAR,
+                                     SectionKind::getMetadata()));
+      emitAlignment(Align(8));
+
+      for (auto &Stub : Stubs)
+        emitAuthenticatedPointer(*OutStreamer, Stub.first, Stub.second);
+
+      OutStreamer->AddBlankLine();
+    }
+
     // Funny Darwin hack: This flag tells the linker that no global symbols
     // contain code that falls through to other global symbols (e.g. the obvious
     // implementation of multiple entry points).  If this doesn't occur, the
@@ -579,7 +626,7 @@ void AArch64AsmPrinter::emitEndOfAsmFile(Module &M) {
 
 }
 
-void AArch64AsmPrinter::emitLOHs() {
+void AArch64AsmPrinter::EmitLOHs() {
   SmallVector<MCSymbol *, 3> MCArgs;
 
   for (const auto &D : AArch64FI->getLOHContainer()) {
@@ -596,7 +643,7 @@ void AArch64AsmPrinter::emitLOHs() {
 
 void AArch64AsmPrinter::emitFunctionBodyEnd() {
   if (!AArch64FI->getLOHRelated().empty())
-    emitLOHs();
+    EmitLOHs();
 }
 
 /// GetCPISymbol - Return the symbol for the specified constant pool entry.
@@ -652,9 +699,6 @@ bool AArch64AsmPrinter::printAsmMRegister(const MachineOperand &MO, char Mode,
     break;
   case 'x':
     Reg = getXRegFromWReg(Reg);
-    break;
-  case 't':
-    Reg = getXRegFromXRegTuple(Reg);
     break;
   }
 
@@ -751,10 +795,6 @@ bool AArch64AsmPrinter::PrintAsmOperand(const MachineInstr *MI, unsigned OpNum,
     if (AArch64::GPR32allRegClass.contains(Reg) ||
         AArch64::GPR64allRegClass.contains(Reg))
       return printAsmMRegister(MO, 'x', O);
-
-    // If this is an x register tuple, print an x register.
-    if (AArch64::GPR64x8ClassRegClass.contains(Reg))
-      return printAsmMRegister(MO, 't', O);
 
     unsigned AltName = AArch64::NoRegAltName;
     const TargetRegisterClass *RegClass;
@@ -1092,7 +1132,7 @@ void AArch64AsmPrinter::LowerFAULTING_OP(const MachineInstr &FaultingMI) {
   OutStreamer->emitInstruction(MI, getSubtargetInfo());
 }
 
-void AArch64AsmPrinter::emitFMov0(const MachineInstr &MI) {
+void AArch64AsmPrinter::EmitFMov0(const MachineInstr &MI) {
   Register DestReg = MI.getOperand(0).getReg();
   if (STI->hasZeroCycleZeroingFP() && !STI->hasZeroCycleZeroingFPWorkaround()) {
     // Convert H/S register to corresponding D register
@@ -1130,6 +1170,53 @@ void AArch64AsmPrinter::emitFMov0(const MachineInstr &MI) {
     }
     EmitToStreamer(*OutStreamer, FMov);
   }
+}
+
+
+const MCExpr *
+AArch64AsmPrinter::lowerPtrAuthGlobalConstant(const GlobalPtrAuthInfo &PAI) {
+  MCContext &Ctx = OutContext;
+
+  // Figure out the base symbol and the addend, if any.
+  APInt Offset(64, 0);
+  const Value *BaseGV =
+    PAI.getPointer()->stripAndAccumulateConstantOffsets(
+      getDataLayout(), Offset, /*AllowNonInbounds=*/true);
+
+  auto *BaseGVB = dyn_cast<GlobalValue>(BaseGV);
+
+  // If we can't understand the referenced ConstantExpr, there's nothing
+  // else we can do: emit an error.
+  if (!BaseGVB) {
+    BaseGVB = PAI.getGV();
+
+    std::string Buf;
+    raw_string_ostream OS(Buf);
+    OS << "Couldn't resolve target base/addend of llvm.ptrauth global '"
+      << *BaseGVB << "'";
+    BaseGV->getContext().emitError(OS.str());
+  }
+
+  // If there is an addend, turn that into the appropriate MCExpr.
+  const MCExpr *Sym = MCSymbolRefExpr::create(getSymbol(BaseGVB), Ctx);
+  if (Offset.sgt(0))
+    Sym = MCBinaryExpr::createAdd(
+        Sym, MCConstantExpr::create(Offset.getSExtValue(), Ctx), Ctx);
+  else if (Offset.slt(0))
+    Sym = MCBinaryExpr::createSub(
+        Sym, MCConstantExpr::create((-Offset).getSExtValue(), Ctx), Ctx);
+
+  auto *Disc = PAI.getDiscriminator();
+  uint64_t KeyID = PAI.getKey()->getZExtValue();
+  if (!isUInt<2>(KeyID))
+    BaseGV->getContext().emitError(
+        "Invalid AArch64 PAC Key ID '" + utostr(KeyID) + "' in llvm.ptrauth global '" +
+        BaseGV->getName() + "'");
+
+  // Finally build the complete @AUTH expr.
+  return AArch64AuthMCExpr::create(Sym, Disc->getZExtValue(),
+                                   AArch64PACKey::ID(KeyID),
+                                   PAI.hasAddressDiversity(), Ctx);
 }
 
 // Simple pseudo-instructions have their lowering (with expansion to real
@@ -1241,9 +1328,188 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
     }
     }
 
+  case AArch64::AUT:
+  case AArch64::AUTPAC: {
+    const bool IsAUTPAC = MI->getOpcode() == AArch64::AUTPAC;
+
+    // We can expand AUT/AUTPAC into 3 possible sequences:
+    // - unchecked:
+    //      autia x16, x0
+    //      pacib x16, x1 ; if AUTPAC
+    //
+    // - checked and clearing:
+    //      mov x17, x16
+    //      autia x16, x0
+    //      xpaci x17
+    //      cmp x16, x17
+    //      pacib x16, x1
+    //      csel x16, x16, x17, eq
+    //   Where we only emit the AUT if we started with an AUT.
+    //
+    // - checked and trapping:
+    //      mov x17, x16
+    //      autia x16, x0
+    //      xpaci x17
+    //      cmp x16, x17
+    //      b.eq Lsuccess
+    //      brk #<0xc470 + aut key>
+    //     Lsuccess:
+    //      pacib x16, x1 ; if AUTPAC
+    //   Where the b.eq skips over the trap if the PAC is valid.
+    //
+    // This sequence is expensive, but we need more information to be able to
+    // do better.
+    //
+    // We can't TBZ the poison bit because EnhancedPAC2 XORs the PAC bits
+    // on failure.
+    // We can't TST the PAC bits because we don't always know how the address
+    // space is setup for the target environment (and the bottom PAC bit is
+    // based on that).
+    // Either way, we also don't always know whether TBI is enabled or not for
+    // the specific target environment.
+    //
+    // FIXME: we could re-use AUTReg as a temporary register, but that would
+    // require splitting the XZR cases into separate opcodes.
+
+    // By default, auth/resign sequences check for auth failures.
+    bool ShouldCheck = true;
+    // In the checked sequence, we only trap if explicitly requested.
+    bool ShouldTrap = MF->getFunction().hasFnAttribute("ptrauth-auth-traps");
+
+    // However, command-line flags can override this, for experimentation.
+    switch (PtrauthAuthChecks) {
+    case PtrauthCheckMode::Default: break;
+    case PtrauthCheckMode::Unchecked:
+      ShouldCheck = ShouldTrap = false;
+      break;
+    case PtrauthCheckMode::Poison:
+      ShouldCheck = true;
+      ShouldTrap = false;
+      break;
+    case PtrauthCheckMode::Trap:
+      ShouldCheck = ShouldTrap = true;
+      break;
+    }
+
+    const auto AUTKey = (AArch64PACKey::ID)MI->getOperand(0).getImm();
+    const unsigned AUTReg = MI->getOperand(1).getReg();
+
+    const unsigned XPACOpc = getXPACOpcodeForKey(AUTKey);
+    const bool AUTZero = AUTReg == AArch64::XZR;
+    const unsigned AUTOpc = getAUTOpcodeForKey(AUTKey, AUTZero);
+
+    // Checked AUTPACs and trapping AUTs need a temporary copy of the input: x17
+    if ((IsAUTPAC && ShouldCheck) || ShouldTrap) {
+      //  mov x17, x16
+      EmitToStreamer(*OutStreamer,
+        MCInstBuilder(AArch64::ORRXrs)
+          .addReg(AArch64::X17)
+          .addReg(AArch64::XZR)
+          .addReg(AArch64::X16)
+          .addImm(0));
+    }
+
+    //  autia x16, x0
+    MCInst AUTInst;
+    AUTInst.setOpcode(AUTOpc);
+    AUTInst.addOperand(MCOperand::createReg(AArch64::X16));
+    AUTInst.addOperand(MCOperand::createReg(AArch64::X16));
+    if (!AUTZero)
+      AUTInst.addOperand(MCOperand::createReg(AUTReg));
+    EmitToStreamer(*OutStreamer, AUTInst);
+
+    // Unchecked or checked-but-non-trapping AUT is just an "AUT": we're done.
+    if (!IsAUTPAC && (!ShouldCheck || !ShouldTrap))
+      return;
+
+    // Checked sequences do an additional strip-and-compare.
+    if (ShouldCheck) {
+      //  xpaci x17
+      EmitToStreamer(*OutStreamer,
+        MCInstBuilder(XPACOpc)
+          .addReg(AArch64::X17)
+          .addReg(AArch64::X17));
+
+      //  cmp x16, x17
+      EmitToStreamer(*OutStreamer,
+        MCInstBuilder(AArch64::SUBSXrs)
+          .addReg(AArch64::XZR)
+          .addReg(AArch64::X16)
+          .addReg(AArch64::X17)
+          .addImm(0));
+
+      // Trapping sequences do a 'brk'.
+      if (ShouldTrap) {
+        //  b.eq Lsuccess
+        //   where Lsuccess is encoded as 2 (the offset from this instruction to
+        //   what's after the brk, divided by 4)
+        EmitToStreamer(*OutStreamer,
+          MCInstBuilder(AArch64::Bcc)
+            .addImm(AArch64CC::EQ)
+            .addImm(2));
+
+        //  brk #<0xc470 + aut key>
+        EmitToStreamer(*OutStreamer,
+          MCInstBuilder(AArch64::BRK)
+            .addImm(0xc470 | AUTKey));
+      }
+    }
+
+    // We already emitted unchecked and checked-but-non-trapping AUTs.
+    // That left us with trapping AUTs, and AUTPACs.
+    // Trapping AUTs don't need PAC: we're done.
+    if (!IsAUTPAC)
+      return;
+
+    const auto PACKey = (AArch64PACKey::ID)MI->getOperand(2).getImm();
+    const unsigned PACReg = MI->getOperand(3).getReg();
+    const bool PACZero = PACReg == AArch64::XZR;
+    const unsigned PACOpc = getPACOpcodeForKey(PACKey, PACZero);
+
+    //  pacib x16, x9
+    MCInst PACInst;
+    PACInst.setOpcode(PACOpc);
+    PACInst.addOperand(MCOperand::createReg(AArch64::X16));
+    PACInst.addOperand(MCOperand::createReg(AArch64::X16));
+    if (!PACZero)
+      PACInst.addOperand(MCOperand::createReg(PACReg));
+    EmitToStreamer(*OutStreamer, PACInst);
+
+    // Non-trapping AUTPAC selects the result based on the xpac check.
+    // Trapping AUTPAC already trapped; unchecked AUTPAC didn't even check.
+    if (ShouldTrap || !ShouldCheck)
+      return;
+
+    //  csel x16, x16, x17, eq
+    EmitToStreamer(*OutStreamer,
+      MCInstBuilder(AArch64::CSELXr)
+        .addReg(AArch64::X16)
+        .addReg(AArch64::X16)
+        .addReg(AArch64::X17)
+        .addImm(0));
+    return;
+  }
+
   // Tail calls use pseudo instructions so they have the proper code-gen
   // attributes (isCall, isReturn, etc.). We lower them to the real
   // instruction here.
+  case AArch64::AUTH_TCRETURNrii:
+  case AArch64::AUTH_TCRETURNriri: {
+    const bool isZero = MI->getOpcode() == AArch64::AUTH_TCRETURNrii;
+    const uint64_t Key = MI->getOperand(2).getImm();
+    assert (Key < 2 && "Unknown key kind for authenticating tail-call return");
+
+    const unsigned Opcodes[2][2] = {{AArch64::BRAA, AArch64::BRAAZ},
+                                    {AArch64::BRAB, AArch64::BRABZ}};
+
+    MCInst TmpInst;
+    TmpInst.setOpcode(Opcodes[Key][isZero]);
+    TmpInst.addOperand(MCOperand::createReg(MI->getOperand(0).getReg()));
+    if (!isZero)
+      TmpInst.addOperand(MCOperand::createReg(MI->getOperand(3).getReg()));
+    EmitToStreamer(*OutStreamer, TmpInst);
+    return;
+  }
   case AArch64::TCRETURNri:
   case AArch64::TCRETURNriBTI:
   case AArch64::TCRETURNriALL: {
@@ -1351,11 +1617,26 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
   case AArch64::JumpTableDest8:
     LowerJumpTableDest(*OutStreamer, *MI);
     return;
+  case AArch64::JumpTableAnchor: {
+    int JTI = MI->getOperand(1).getIndex();
+    assert(!AArch64FI->getJumpTableEntryPCRelSymbol(JTI) &&
+           "unsupported compressed jump table");
 
+    auto Label = MF->getContext().createTempSymbol();
+    auto LabelE = MCSymbolRefExpr::create(Label, MF->getContext());
+    AArch64FI->setJumpTableEntryInfo(JTI, 4, Label);
+
+    OutStreamer->emitLabel(Label);
+    EmitToStreamer(*OutStreamer, MCInstBuilder(AArch64::ADR)
+                                     .addReg(MI->getOperand(0).getReg())
+                                     .addExpr(LabelE));
+    return;
+  }
+  
   case AArch64::FMOVH0:
   case AArch64::FMOVS0:
   case AArch64::FMOVD0:
-    emitFMov0(*MI);
+    EmitFMov0(*MI);
     return;
 
   case TargetOpcode::STACKMAP:
@@ -1388,29 +1669,29 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
     return;
 
   case AArch64::SEH_StackAlloc:
-    TS->emitARM64WinCFIAllocStack(MI->getOperand(0).getImm());
+    TS->EmitARM64WinCFIAllocStack(MI->getOperand(0).getImm());
     return;
 
   case AArch64::SEH_SaveFPLR:
-    TS->emitARM64WinCFISaveFPLR(MI->getOperand(0).getImm());
+    TS->EmitARM64WinCFISaveFPLR(MI->getOperand(0).getImm());
     return;
 
   case AArch64::SEH_SaveFPLR_X:
     assert(MI->getOperand(0).getImm() < 0 &&
            "Pre increment SEH opcode must have a negative offset");
-    TS->emitARM64WinCFISaveFPLRX(-MI->getOperand(0).getImm());
+    TS->EmitARM64WinCFISaveFPLRX(-MI->getOperand(0).getImm());
     return;
 
   case AArch64::SEH_SaveReg:
-    TS->emitARM64WinCFISaveReg(MI->getOperand(0).getImm(),
+    TS->EmitARM64WinCFISaveReg(MI->getOperand(0).getImm(),
                                MI->getOperand(1).getImm());
     return;
 
   case AArch64::SEH_SaveReg_X:
     assert(MI->getOperand(1).getImm() < 0 &&
            "Pre increment SEH opcode must have a negative offset");
-    TS->emitARM64WinCFISaveRegX(MI->getOperand(0).getImm(),
-                                -MI->getOperand(1).getImm());
+    TS->EmitARM64WinCFISaveRegX(MI->getOperand(0).getImm(),
+		                -MI->getOperand(1).getImm());
     return;
 
   case AArch64::SEH_SaveRegP:
@@ -1418,13 +1699,13 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
         MI->getOperand(0).getImm() <= 28) {
       assert((MI->getOperand(0).getImm() - 19) % 2 == 0 &&
              "Register paired with LR must be odd");
-      TS->emitARM64WinCFISaveLRPair(MI->getOperand(0).getImm(),
+      TS->EmitARM64WinCFISaveLRPair(MI->getOperand(0).getImm(),
                                     MI->getOperand(2).getImm());
       return;
     }
     assert((MI->getOperand(1).getImm() - MI->getOperand(0).getImm() == 1) &&
             "Non-consecutive registers not allowed for save_regp");
-    TS->emitARM64WinCFISaveRegP(MI->getOperand(0).getImm(),
+    TS->EmitARM64WinCFISaveRegP(MI->getOperand(0).getImm(),
                                 MI->getOperand(2).getImm());
     return;
 
@@ -1433,26 +1714,26 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
             "Non-consecutive registers not allowed for save_regp_x");
     assert(MI->getOperand(2).getImm() < 0 &&
            "Pre increment SEH opcode must have a negative offset");
-    TS->emitARM64WinCFISaveRegPX(MI->getOperand(0).getImm(),
+    TS->EmitARM64WinCFISaveRegPX(MI->getOperand(0).getImm(),
                                  -MI->getOperand(2).getImm());
     return;
 
   case AArch64::SEH_SaveFReg:
-    TS->emitARM64WinCFISaveFReg(MI->getOperand(0).getImm(),
+    TS->EmitARM64WinCFISaveFReg(MI->getOperand(0).getImm(),
                                 MI->getOperand(1).getImm());
     return;
 
   case AArch64::SEH_SaveFReg_X:
     assert(MI->getOperand(1).getImm() < 0 &&
            "Pre increment SEH opcode must have a negative offset");
-    TS->emitARM64WinCFISaveFRegX(MI->getOperand(0).getImm(),
+    TS->EmitARM64WinCFISaveFRegX(MI->getOperand(0).getImm(),
                                  -MI->getOperand(1).getImm());
     return;
 
   case AArch64::SEH_SaveFRegP:
     assert((MI->getOperand(1).getImm() - MI->getOperand(0).getImm() == 1) &&
             "Non-consecutive registers not allowed for save_regp");
-    TS->emitARM64WinCFISaveFRegP(MI->getOperand(0).getImm(),
+    TS->EmitARM64WinCFISaveFRegP(MI->getOperand(0).getImm(),
                                  MI->getOperand(2).getImm());
     return;
 
@@ -1461,32 +1742,32 @@ void AArch64AsmPrinter::emitInstruction(const MachineInstr *MI) {
             "Non-consecutive registers not allowed for save_regp_x");
     assert(MI->getOperand(2).getImm() < 0 &&
            "Pre increment SEH opcode must have a negative offset");
-    TS->emitARM64WinCFISaveFRegPX(MI->getOperand(0).getImm(),
+    TS->EmitARM64WinCFISaveFRegPX(MI->getOperand(0).getImm(),
                                   -MI->getOperand(2).getImm());
     return;
 
   case AArch64::SEH_SetFP:
-    TS->emitARM64WinCFISetFP();
+    TS->EmitARM64WinCFISetFP();
     return;
 
   case AArch64::SEH_AddFP:
-    TS->emitARM64WinCFIAddFP(MI->getOperand(0).getImm());
+    TS->EmitARM64WinCFIAddFP(MI->getOperand(0).getImm());
     return;
 
   case AArch64::SEH_Nop:
-    TS->emitARM64WinCFINop();
+    TS->EmitARM64WinCFINop();
     return;
 
   case AArch64::SEH_PrologEnd:
-    TS->emitARM64WinCFIPrologEnd();
+    TS->EmitARM64WinCFIPrologEnd();
     return;
 
   case AArch64::SEH_EpilogStart:
-    TS->emitARM64WinCFIEpilogStart();
+    TS->EmitARM64WinCFIEpilogStart();
     return;
 
   case AArch64::SEH_EpilogEnd:
-    TS->emitARM64WinCFIEpilogEnd();
+    TS->EmitARM64WinCFIEpilogEnd();
     return;
   }
 

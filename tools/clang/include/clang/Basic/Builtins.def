@@ -24,8 +24,7 @@
 //  c -> char
 //  s -> short
 //  i -> int
-//  h -> half (__fp16, OpenCL)
-//  x -> half (_Float16)
+//  h -> half
 //  f -> float
 //  d -> double
 //  z -> size_t
@@ -948,12 +947,12 @@ LANGBUILTIN(_ReturnAddress, "v*", "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(_rotl8,  "UcUcUc",    "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(_rotl16, "UsUsUc",    "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(_rotl,   "UiUii",     "n", ALL_MS_LANGUAGES)
-LANGBUILTIN(_lrotl,  "ULiULii",   "n", ALL_MS_LANGUAGES)
+LANGBUILTIN(_lrotl,  "UNiUNii",   "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(_rotl64, "UWiUWii",   "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(_rotr8,  "UcUcUc",    "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(_rotr16, "UsUsUc",    "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(_rotr,   "UiUii",     "n", ALL_MS_LANGUAGES)
-LANGBUILTIN(_lrotr,  "ULiULii",   "n", ALL_MS_LANGUAGES)
+LANGBUILTIN(_lrotr,  "UNiUNii",   "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(_rotr64, "UWiUWii",   "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(__va_start,       "vc**.", "nt", ALL_MS_LANGUAGES)
 LANGBUILTIN(__fastfail, "vUi",    "nr", ALL_MS_LANGUAGES)
@@ -1595,6 +1594,16 @@ LANGBUILTIN(__builtin_coro_end, "bv*Ib", "n", COR_LANG)
 LANGBUILTIN(__builtin_coro_suspend, "cIb", "n", COR_LANG)
 LANGBUILTIN(__builtin_coro_param, "bv*v*", "n", COR_LANG)
 
+// Pointer authentication builtins.
+BUILTIN(__builtin_ptrauth_strip, "v*v*i", "tnc")
+BUILTIN(__builtin_ptrauth_blend_discriminator, "zv*i", "tnc")
+BUILTIN(__builtin_ptrauth_sign_constant, "v*v*iv*", "tnc")
+BUILTIN(__builtin_ptrauth_sign_unauthenticated, "v*v*iv*", "tnc")
+BUILTIN(__builtin_ptrauth_sign_generic_data, "zv*v*", "tnc")
+BUILTIN(__builtin_ptrauth_auth_and_resign, "v*v*iv*iv*", "tn")
+BUILTIN(__builtin_ptrauth_auth, "v*v*iv*", "tn")
+BUILTIN(__builtin_ptrauth_string_discriminator, "zcC*", "nc")
+
 // OpenCL v2.0 s6.13.16, s9.17.3.5 - Pipe functions.
 // We need the generic prototype, since the packet type could be anything.
 LANGBUILTIN(read_pipe, "i.", "tn", OCLC20_LANG)
@@ -1657,9 +1666,6 @@ BUILTIN(__xray_typedevent, "vzcC*z", "")
 BUILTIN(__builtin_ms_va_start, "vc*&.", "nt")
 BUILTIN(__builtin_ms_va_end, "vc*&", "n")
 BUILTIN(__builtin_ms_va_copy, "vc*&c*&", "n")
-
-// Arithmetic Fence: to prevent FP reordering and reassociation optimizations
-LANGBUILTIN(__arithmetic_fence, "v.", "t", ALL_LANGUAGES)
 
 #undef BUILTIN
 #undef LIBBUILTIN

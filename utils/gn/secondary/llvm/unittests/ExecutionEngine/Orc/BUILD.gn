@@ -14,7 +14,6 @@ unittest("OrcJITTests") {
   ]
   sources = [
     "CoreAPIsTest.cpp",
-    "ExecutionSessionWrapperFunctionCallsTest.cpp",
     "IndirectionUtilsTest.cpp",
     "JITTargetMachineBuilderTest.cpp",
     "LazyCallThroughAndReexportsTest.cpp",

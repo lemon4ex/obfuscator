@@ -313,15 +313,13 @@ if( LLVM_ENABLE_PIC )
     add_flag_or_print_warning("-fPIC" FPIC)
     # Enable interprocedural optimizations for non-inline functions which would
     # otherwise be disabled due to GCC -fPIC's default.
-    # Note: GCC<10.3 has a bug on SystemZ.
     #
     # Note: Clang allows IPO for -fPIC so this optimization is less effective.
     # Older Clang may support -fno-semantic-interposition but it used local
     # aliases to optimize global variables, which is incompatible with copy
     # relocations due to -fno-pic.
-    if ((CMAKE_COMPILER_IS_GNUCXX AND
-         NOT (LLVM_NATIVE_ARCH STREQUAL "SystemZ" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 10.3))
-       OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_VERSION GREATER_EQUAL 13))
+    if (CMAKE_COMPILER_IS_GNUCXX OR (CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND
+        CMAKE_CXX_COMPILER_VERSION GREATER_EQUAL 13))
       add_flag_if_supported("-fno-semantic-interposition" FNO_SEMANTIC_INTERPOSITION)
     endif()
   endif()
@@ -794,6 +792,17 @@ endif (LLVM_ENABLE_WARNINGS AND (LLVM_COMPILER_IS_GCC_COMPATIBLE OR CLANG_CL))
 
 if (LLVM_COMPILER_IS_GCC_COMPATIBLE AND NOT LLVM_ENABLE_WARNINGS)
   append("-w" CMAKE_C_FLAGS CMAKE_CXX_FLAGS)
+endif()
+
+# Enable '-index-store-path' on a Debug build, if the compiler supports it and for non-IDE generators.
+option(LLVM_DISABLE_INDEX_STORE "Disable '-index-store-path' flag" Off)
+if (NOT LLVM_DISABLE_INDEX_STORE AND NOT XCODE AND NOT MSVC_IDE AND uppercase_CMAKE_BUILD_TYPE STREQUAL "DEBUG")
+  set(INDEX_DATA_STORE_PATH "${PROJECT_BINARY_DIR}/IndexStore" CACHE STRING "Index store path")
+
+  check_c_compiler_flag("-Werror -index-store-path \"${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeTmp/IndexStore\"" "C_SUPPORTS_INDEX_STORE")
+  append_if("C_SUPPORTS_INDEX_STORE" "-index-store-path \"${INDEX_DATA_STORE_PATH}\"" CMAKE_C_FLAGS)
+  check_cxx_compiler_flag("-Werror -index-store-path \"${CMAKE_BINARY_DIR}${CMAKE_FILES_DIRECTORY}/CMakeTmp/IndexStore\"" "CXX_SUPPORTS_INDEX_STORE")
+  append_if("CXX_SUPPORTS_INDEX_STORE" "-index-store-path \"${INDEX_DATA_STORE_PATH}\"" CMAKE_CXX_FLAGS)
 endif()
 
 macro(append_common_sanitizer_flags)

@@ -1035,11 +1035,11 @@ void f() {
 
 // CHECK:  "kind": "ObjCCompatibleAliasDecl",
 // CHECK-NEXT:  "loc": {
-// CHECK-NEXT:   "offset": 926,
+// CHECK-NEXT:   "offset": 947,
 // CHECK-NEXT:   "file": "{{.*}}",
 // CHECK-NEXT:   "line": 60,
-// CHECK-NEXT:   "col": 1,
-// CHECK-NEXT:   "tokLen": 1
+// CHECK-NEXT:   "col": 22, 
+// CHECK-NEXT:   "tokLen": 27
 // CHECK-NEXT:  },
 // CHECK-NEXT:  "range": {
 // CHECK-NEXT:   "begin": {

@@ -45,10 +45,6 @@
 
 using namespace llvm;
 
-static cl::opt<bool> DisableI2pP2iOpt(
-    "disable-i2p-p2i-opt", cl::init(false),
-    cl::desc("Disables inttoptr/ptrtoint roundtrip optimization"));
-
 //===----------------------------------------------------------------------===//
 //                            AllocaInst Class
 //===----------------------------------------------------------------------===//
@@ -472,9 +468,10 @@ CallBase *CallBase::removeOperandBundle(CallBase *CB, uint32_t ID,
 
 bool CallBase::hasReadingOperandBundles() const {
   // Implementation note: this is a conservative implementation of operand
-  // bundle semantics, where *any* non-assume operand bundle forces a callsite
-  // to be at least readonly.
-  return hasOperandBundles() && getIntrinsicID() != Intrinsic::assume;
+  // bundle semantics, where *any* non-assume non-ptrauth operand bundle forces
+  // a callsite to be at least readonly.
+  return hasOperandBundlesOtherThan(LLVMContext::OB_ptrauth) &&
+         getIntrinsicID() != Intrinsic::assume;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1251,10 +1248,9 @@ BranchInst::BranchInst(BasicBlock *IfTrue, BasicBlock *IfFalse, Value *Cond,
     : Instruction(Type::getVoidTy(IfTrue->getContext()), Instruction::Br,
                   OperandTraits<BranchInst>::op_end(this) - 3, 3,
                   InsertBefore) {
-  // Assign in order of operand index to make use-list order predictable.
-  Op<-3>() = Cond;
-  Op<-2>() = IfFalse;
   Op<-1>() = IfTrue;
+  Op<-2>() = IfFalse;
+  Op<-3>() = Cond;
 #ifndef NDEBUG
   AssertOK();
 #endif
@@ -1271,10 +1267,9 @@ BranchInst::BranchInst(BasicBlock *IfTrue, BasicBlock *IfFalse, Value *Cond,
                        BasicBlock *InsertAtEnd)
     : Instruction(Type::getVoidTy(IfTrue->getContext()), Instruction::Br,
                   OperandTraits<BranchInst>::op_end(this) - 3, 3, InsertAtEnd) {
-  // Assign in order of operand index to make use-list order predictable.
-  Op<-3>() = Cond;
-  Op<-2>() = IfFalse;
   Op<-1>() = IfTrue;
+  Op<-2>() = IfFalse;
+  Op<-3>() = Cond;
 #ifndef NDEBUG
   AssertOK();
 #endif
@@ -1284,13 +1279,12 @@ BranchInst::BranchInst(const BranchInst &BI)
     : Instruction(Type::getVoidTy(BI.getContext()), Instruction::Br,
                   OperandTraits<BranchInst>::op_end(this) - BI.getNumOperands(),
                   BI.getNumOperands()) {
-  // Assign in order of operand index to make use-list order predictable.
+  Op<-1>() = BI.Op<-1>();
   if (BI.getNumOperands() != 1) {
     assert(BI.getNumOperands() == 3 && "BR can have 1 or 3 operands!");
     Op<-3>() = BI.Op<-3>();
     Op<-2>() = BI.Op<-2>();
   }
-  Op<-1>() = BI.Op<-1>();
   SubclassOptionalData = BI.SubclassOptionalData;
 }
 
@@ -2096,7 +2090,6 @@ void ShuffleVectorInst::setShuffleMask(ArrayRef<int> Mask) {
   ShuffleMask.assign(Mask.begin(), Mask.end());
   ShuffleMaskForBitcode = convertShuffleMaskForBitcode(Mask, getType());
 }
-
 Constant *ShuffleVectorInst::convertShuffleMaskForBitcode(ArrayRef<int> Mask,
                                                           Type *ResultTy) {
   Type *Int32Ty = Type::getInt32Ty(ResultTy->getContext());
@@ -2849,10 +2842,6 @@ unsigned CastInst::isEliminableCastPair(
         return secondOp;
       return 0;
     case 7: {
-      // Disable inttoptr/ptrtoint optimization if enabled.
-      if (DisableI2pP2iOpt)
-        return 0;
-
       // Cannot simplify if address spaces are different!
       if (SrcTy->getPointerAddressSpace() != DstTy->getPointerAddressSpace())
         return 0;

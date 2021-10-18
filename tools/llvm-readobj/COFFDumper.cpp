@@ -1874,7 +1874,7 @@ void COFFDumper::printResourceDirectoryTable(
         OS << ": (ID " << Entry.Identifier.ID << ")";
       }
     }
-    Name = IDStr;
+    Name = StringRef(IDStr);
     ListScope ResourceType(W, Level.str() + Name.str());
     if (Entry.Offset.isSubDir()) {
       W.printHex("Table Offset", Entry.Offset.value());

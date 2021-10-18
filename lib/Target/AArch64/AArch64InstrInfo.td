@@ -122,12 +122,6 @@ def HasSVE2SHA3      : Predicate<"Subtarget->hasSVE2SHA3()">,
                                  AssemblerPredicate<(all_of FeatureSVE2SHA3), "sve2-sha3">;
 def HasSVE2BitPerm   : Predicate<"Subtarget->hasSVE2BitPerm()">,
                                  AssemblerPredicate<(all_of FeatureSVE2BitPerm), "sve2-bitperm">;
-def HasSME           : Predicate<"Subtarget->hasSME()">,
-                                 AssemblerPredicate<(all_of FeatureSME), "sme">;
-def HasSMEF64        : Predicate<"Subtarget->hasSMEF64()">,
-                                 AssemblerPredicate<(all_of FeatureSMEF64), "sme-f64">;
-def HasSMEI64        : Predicate<"Subtarget->hasSMEI64()">,
-                                 AssemblerPredicate<(all_of FeatureSMEI64), "sme-i64">;
 def HasRCPC          : Predicate<"Subtarget->hasRCPC()">,
                                  AssemblerPredicate<(all_of FeatureRCPC), "rcpc">;
 def HasAltNZCV       : Predicate<"Subtarget->hasAlternativeNZCV()">,
@@ -648,7 +642,6 @@ let RecomputePerFunction = 1 in {
 
 include "AArch64InstrFormats.td"
 include "SVEInstrFormats.td"
-include "SMEInstrFormats.td"
 
 //===----------------------------------------------------------------------===//
 
@@ -744,6 +737,21 @@ def JumpTableDest16 : Pseudo<(outs GPR64:$dst, GPR64sp:$scratch),
 def JumpTableDest8 : Pseudo<(outs GPR64:$dst, GPR64sp:$scratch),
                             (ins GPR64:$table, GPR64:$entry, i32imm:$jti), []>,
                      Sched<[]>;
+}
+
+let isNotDuplicable = 1 in
+def JumpTableAnchor : Pseudo<(outs GPR64:$pc), (ins i32imm:$jti), []>,
+                      Sched<[WriteI]>;
+
+def BR_JumpTable : Pseudo<(outs), (ins i32imm:$jti), []>,
+                   Sched<[]> {
+  let isBranch = 1;
+  let isTerminator = 1;
+  let isIndirectBranch = 1;
+  let isBarrier = 1;
+  let Defs = [X16,X17,NZCV];
+  let Uses = [X16];
+  let Size = 44; // 28 fixed + 16 variable, for table size materialization
 }
 
 // Space-consuming pseudo to aid testing of placement and reachability
@@ -1061,6 +1069,17 @@ let Predicates = [HasComplxNum, HasNEON] in {
   }
 }
 
+def AArch64authcall : SDNode<"AArch64ISD::AUTH_CALL",
+                             SDTypeProfile<0, -1, [SDTCisPtrTy<0>]>,
+                             [SDNPHasChain, SDNPOptInGlue, SDNPOutGlue,
+                              SDNPVariadic]>;
+
+def AArch64authtcret: SDNode<"AArch64ISD::AUTH_TC_RETURN",
+                             SDTypeProfile<0, 4, [SDTCisPtrTy<0>,
+                                                  SDTCisVT<2, i32>,
+                                                  SDTCisVT<3, i64>]>,
+                             [SDNPHasChain,  SDNPOptInGlue, SDNPVariadic]>;
+
 multiclass FCMLA_PATS<ValueType ty, DAGOperand Reg> {
   def : Pat<(ty (int_aarch64_neon_vcmla_rot0 (ty Reg:$Rd), (ty Reg:$Rn), (ty Reg:$Rm))),
             (!cast<Instruction>("FCMLA" # ty) $Rd, $Rn, $Rm, 0)>;
@@ -1156,6 +1175,17 @@ def : InstAlias<"xpaclri", (XPACLRI), 0>;
 
 // These pointer authentication instructions require armv8.3a
 let Predicates = [HasPAuth] in {
+  multiclass SignAuth<bits<3> prefix, bits<3> prefix_z, string asm,
+                      SDPatternOperator op> {
+    def IA   : SignAuthOneData<prefix, 0b00, !strconcat(asm, "ia"), op>;
+    def IB   : SignAuthOneData<prefix, 0b01, !strconcat(asm, "ib"), op>;
+    def DA   : SignAuthOneData<prefix, 0b10, !strconcat(asm, "da"), op>;
+    def DB   : SignAuthOneData<prefix, 0b11, !strconcat(asm, "db"), op>;
+    def IZA  : SignAuthZero<prefix_z, 0b00, !strconcat(asm, "iza"), op>;
+    def DZA  : SignAuthZero<prefix_z, 0b10, !strconcat(asm, "dza"), op>;
+    def IZB  : SignAuthZero<prefix_z, 0b01, !strconcat(asm, "izb"), op>;
+    def DZB  : SignAuthZero<prefix_z, 0b11, !strconcat(asm, "dzb"), op>;
+  }
 
   // When PA is enabled, a better mnemonic should be emitted.
   def : InstAlias<"paciaz", (PACIAZ), 1>;
@@ -1172,23 +1202,22 @@ let Predicates = [HasPAuth] in {
   def : InstAlias<"autib1716", (AUTIB1716), 1>;
   def : InstAlias<"xpaclri", (XPACLRI), 1>;
 
-  multiclass SignAuth<bits<3> prefix, bits<3> prefix_z, string asm> {
-    def IA   : SignAuthOneData<prefix, 0b00, !strconcat(asm, "ia")>;
-    def IB   : SignAuthOneData<prefix, 0b01, !strconcat(asm, "ib")>;
-    def DA   : SignAuthOneData<prefix, 0b10, !strconcat(asm, "da")>;
-    def DB   : SignAuthOneData<prefix, 0b11, !strconcat(asm, "db")>;
-    def IZA  : SignAuthZero<prefix_z, 0b00, !strconcat(asm, "iza")>;
-    def DZA  : SignAuthZero<prefix_z, 0b10, !strconcat(asm, "dza")>;
-    def IZB  : SignAuthZero<prefix_z, 0b01, !strconcat(asm, "izb")>;
-    def DZB  : SignAuthZero<prefix_z, 0b11, !strconcat(asm, "dzb")>;
-  }
+  defm PAC : SignAuth<0b000, 0b010, "pac", int_ptrauth_sign>;
+  defm AUT : SignAuth<0b001, 0b011, "aut", null_frag>;
 
-  defm PAC : SignAuth<0b000, 0b010, "pac">;
-  defm AUT : SignAuth<0b001, 0b011, "aut">;
+  def PACGA : SignAuthTwoOperand<0b1100, "pacga", int_ptrauth_sign_generic>;
 
   def XPACI : ClearAuth<0, "xpaci">;
+  // Pseudo of the previous instruction with untied operands. Lowers to:
+  // mov $dst, $src
+  // xpaci $dst
+  def XPACIuntied : Pseudo<(outs GPR64:$dst), (ins GPR64:$src), []>, Sched<[]>;
+  def : Pat<(int_ptrauth_strip GPR64:$Rd, 0), (XPACIuntied GPR64:$Rd)>;
+  def : Pat<(int_ptrauth_strip GPR64:$Rd, 1), (XPACIuntied GPR64:$Rd)>;
+
   def XPACD : ClearAuth<1, "xpacd">;
-  def PACGA : SignAuthTwoOperand<0b1100, "pacga", null_frag>;
+  def : Pat<(int_ptrauth_strip GPR64:$Rd, 2), (XPACD GPR64:$Rd)>;
+  def : Pat<(int_ptrauth_strip GPR64:$Rd, 3), (XPACD GPR64:$Rd)>;
 
   // Combined Instructions
   let isBranch = 1, isTerminator = 1, isBarrier = 1, isIndirectBranch = 1  in {
@@ -1209,6 +1238,15 @@ let Predicates = [HasPAuth] in {
     def BLRABZ  : AuthOneOperand<0b001, 1, "blrabz">;
   }
 
+  def : Pat<(AArch64authcall GPR64:$Rn, (i32 0), GPR64sp:$Rm),
+            (BLRAA GPR64:$Rn, GPR64:$Rm)>;
+  def : Pat<(AArch64authcall GPR64:$Rn, (i32 1), GPR64sp:$Rm),
+            (BLRAB GPR64:$Rn, GPR64:$Rm)>;
+  def : Pat<(AArch64authcall GPR64:$Rn, (i32 0), (i64 0)),
+            (BLRAAZ GPR64:$Rn)>;
+  def : Pat<(AArch64authcall GPR64:$Rn, (i32 1), (i64 0)),
+            (BLRABZ GPR64:$Rn)>;
+
   let isReturn = 1, isTerminator = 1, isBarrier = 1 in {
     def RETAA   : AuthReturn<0b010, 0, "retaa">;
     def RETAB   : AuthReturn<0b010, 1, "retab">;
@@ -1218,6 +1256,64 @@ let Predicates = [HasPAuth] in {
 
   defm LDRAA  : AuthLoad<0, "ldraa", simm10Scaled>;
   defm LDRAB  : AuthLoad<1, "ldrab", simm10Scaled>;
+
+  // AUT pseudo.
+  // This directly manipulates x16/x17, which are the only registers the OS
+  // guarantees are safe to use for sensitive operations.
+  def AUT : Pseudo<(outs), (ins i32imm:$Key, GPR64all:$Rn), []>,
+            Sched<[WriteI, ReadI]> {
+    let isCodeGenOnly = 1;
+    let hasSideEffects = 1;
+    let mayStore = 0;
+    let mayLoad = 0;
+    let Defs = [X16,X17,NZCV];
+    let Uses = [X16,X17];
+  }
+
+  // AUT and re-PAC a value, using different keys/data.
+  // This directly manipulates x16/x17, which are the only registers the OS
+  // guarantees are safe to use for sensitive operations.
+  def AUTPAC : Pseudo<(outs), (ins i32imm:$AUTKey, GPR64:$AUTRn,
+                                   i32imm:$PACKey, GPR64:$PACRn), []>,
+               Sched<[WriteI, ReadI]> {
+    let isCodeGenOnly = 1;
+    let hasSideEffects = 1;
+    let mayStore = 0;
+    let mayLoad = 0;
+    let Defs = [X16,X17,NZCV];
+    let Uses = [X16,X17];
+  }
+
+  // Materialize a signed global address.
+  def MOVaddrPAC : Pseudo<(outs),
+                          (ins i64imm:$Addr, i64imm:$Offset, i32imm:$Key,
+                               GPR64:$AddrDisc, i64imm:$Disc), []>,
+               Sched<[WriteI, ReadI]> {
+    let isReMaterializable = 1;
+    let isCodeGenOnly = 1;
+    let Size = 28; // ranges from 12 to 28
+    let Defs = [X16,X17];
+    let Uses = [X16,X17];
+  }
+
+  let isCall = 1, isTerminator = 1, isReturn = 1, isBarrier = 1,
+      Uses = [SP] in {
+    def AUTH_TCRETURNriri : Pseudo<(outs), (ins tcGPR64:$dst, i32imm:$FPDiff,
+                                                i32imm:$Key, tcGPR64:$Rn),
+                                 []>, Sched<[WriteBrReg]>;
+    def AUTH_TCRETURNrii : Pseudo<(outs), (ins tcGPR64:$dst, i32imm:$FPDiff,
+                                                i32imm:$Key),
+                                 []>, Sched<[WriteBrReg]>;
+  }
+
+  def : Pat<(AArch64authtcret tcGPR64:$dst, (i32 timm:$FPDiff), (i32 timm:$Key),
+                              tcGPR64:$Rn),
+            (AUTH_TCRETURNriri tcGPR64:$dst, imm:$FPDiff, imm:$Key,
+                               tcGPR64:$Rn)>;
+
+  def : Pat<(AArch64authtcret tcGPR64:$dst, (i32 timm:$FPDiff), (i32 timm:$Key),
+                              (i64 0)),
+            (AUTH_TCRETURNrii tcGPR64:$dst, imm:$FPDiff, imm:$Key)>;
 
 }
 
@@ -4230,37 +4326,6 @@ multiclass SIMDVectorLShiftLongBySizeBHSPats<SDPatternOperator ext> {
 defm : SIMDVectorLShiftLongBySizeBHSPats<anyext>;
 defm : SIMDVectorLShiftLongBySizeBHSPats<zext>;
 defm : SIMDVectorLShiftLongBySizeBHSPats<sext>;
-
-// Constant vector values, used in the S/UQXTN patterns below.
-def VImmFF:   PatLeaf<(AArch64NvCast (v2i64 (AArch64movi_edit (i32 85))))>;
-def VImmFFFF: PatLeaf<(AArch64NvCast (v2i64 (AArch64movi_edit (i32 51))))>;
-def VImm7F:   PatLeaf<(AArch64movi_shift (i32 127), (i32 0))>;
-def VImm80:   PatLeaf<(AArch64mvni_shift (i32 127), (i32 0))>;
-def VImm7FFF: PatLeaf<(AArch64movi_msl (i32 127), (i32 264))>;
-def VImm8000: PatLeaf<(AArch64mvni_msl (i32 127), (i32 264))>;
-
-// trunc(umin(X, 255)) -> UQXTRN v8i8
-def : Pat<(v8i8 (trunc (umin (v8i16 V128:$Vn), (v8i16 VImmFF)))),
-          (UQXTNv8i8 V128:$Vn)>;
-// trunc(umin(X, 65535)) -> UQXTRN v4i16
-def : Pat<(v4i16 (trunc (umin (v4i32 V128:$Vn), (v4i32 VImmFFFF)))),
-          (UQXTNv4i16 V128:$Vn)>;
-// trunc(smin(smax(X, -128), 128)) -> SQXTRN
-//  with reversed min/max
-def : Pat<(v8i8 (trunc (smin (smax (v8i16 V128:$Vn), (v8i16 VImm80)),
-                             (v8i16 VImm7F)))),
-          (SQXTNv8i8 V128:$Vn)>;
-def : Pat<(v8i8 (trunc (smax (smin (v8i16 V128:$Vn), (v8i16 VImm7F)),
-                             (v8i16 VImm80)))),
-          (SQXTNv8i8 V128:$Vn)>;
-// trunc(smin(smax(X, -32768), 32767)) -> SQXTRN
-//  with reversed min/max
-def : Pat<(v4i16 (trunc (smin (smax (v4i32 V128:$Vn), (v4i32 VImm8000)),
-                              (v4i32 VImm7FFF)))),
-          (SQXTNv4i16 V128:$Vn)>;
-def : Pat<(v4i16 (trunc (smax (smin (v4i32 V128:$Vn), (v4i32 VImm7FFF)),
-                              (v4i32 VImm8000)))),
-          (SQXTNv4i16 V128:$Vn)>;
 
 //===----------------------------------------------------------------------===//
 // Advanced SIMD three vector instructions.
@@ -8092,18 +8157,14 @@ let AddedComplexity = 10 in {
   // FIXME: add SVE dot-product patterns.
 }
 
-// Custom DAG nodes and isel rules to make a 64-byte block out of eight GPRs,
-// so that it can be used as input to inline asm, and vice versa.
-def LS64_BUILD : SDNode<"AArch64ISD::LS64_BUILD", SDTypeProfile<1, 8, []>>;
-def LS64_EXTRACT : SDNode<"AArch64ISD::LS64_EXTRACT", SDTypeProfile<1, 2, []>>;
-def : Pat<(i64x8 (LS64_BUILD GPR64:$x0, GPR64:$x1, GPR64:$x2, GPR64:$x3,
-                             GPR64:$x4, GPR64:$x5, GPR64:$x6, GPR64:$x7)),
-          (REG_SEQUENCE GPR64x8Class,
-              $x0, x8sub_0, $x1, x8sub_1, $x2, x8sub_2, $x3, x8sub_3,
-              $x4, x8sub_4, $x5, x8sub_5, $x6, x8sub_6, $x7, x8sub_7)>;
-foreach i = 0-7 in {
-  def : Pat<(i64 (LS64_EXTRACT (i64x8 GPR64x8:$val), (i32 i))),
-            (EXTRACT_SUBREG $val, !cast<SubRegIndex>("x8sub_"#i))>;
+//-----------------------------------------------------------------------------
+// v8.3 Pointer Authentication late patterns
+
+let Predicates = [HasPAuth] in {
+def : Pat<(int_ptrauth_blend GPR64:$Rd, imm64_0_65535:$imm),
+          (MOVKXi GPR64:$Rd, (trunc_imm imm64_0_65535:$imm), 48)>;
+def : Pat<(int_ptrauth_blend GPR64:$Rd, GPR64:$Rn),
+          (BFMXri GPR64:$Rd, GPR64:$Rn, 16, 15)>;
 }
 
 let Predicates = [HasLS64] in {
@@ -8130,5 +8191,5 @@ def StoreSwiftAsyncContext
 
 include "AArch64InstrAtomics.td"
 include "AArch64SVEInstrInfo.td"
-include "AArch64SMEInstrInfo.td"
+
 include "AArch64InstrGISel.td"

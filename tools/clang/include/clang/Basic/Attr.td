@@ -101,6 +101,10 @@ def NonStaticNonConstCXXMethod
                     [{!S->isStatic() && !S->isConst()}],
                     "non-static non-const member functions">;
 
+def ObjCClassMethod : SubsetSubject<ObjCMethod,
+                                    [{!S->isInstanceMethod()}],
+                                    "Objective-C class methods">;
+
 def ObjCInstanceMethod : SubsetSubject<ObjCMethod,
                                        [{S->isInstanceMethod()}],
                                        "Objective-C instance methods">;
@@ -255,6 +259,9 @@ class VariadicEnumArgument<string name, string type, list<string> values,
   list<string> Values = values;
   list<string> Enums = enums;
 }
+
+// Represents an attribute wrapped by another attribute.
+class AttrArgument<string name, bit opt = 0> : Argument<name, opt>;
 
 // This handles one spelling of an attribute.
 class Spelling<string name, string variety> {
@@ -856,8 +863,6 @@ def Availability : InheritableAttr {
              .Case("macos_app_extension", "macOS (App Extension)")
              .Case("tvos_app_extension", "tvOS (App Extension)")
              .Case("watchos_app_extension", "watchOS (App Extension)")
-             .Case("maccatalyst", "macCatalyst")
-             .Case("maccatalyst_app_extension", "macCatalyst (App Extension)")
              .Case("swift", "Swift")
              .Default(llvm::StringRef());
 }
@@ -871,8 +876,6 @@ static llvm::StringRef getPlatformNameSourceSpelling(llvm::StringRef Platform) {
              .Case("macos_app_extension", "macOSApplicationExtension")
              .Case("tvos_app_extension", "tvOSApplicationExtension")
              .Case("watchos_app_extension", "watchOSApplicationExtension")
-             .Case("maccatalyst", "macCatalyst")
-             .Case("maccatalyst_app_extension", "macCatalystApplicationExtension")
              .Case("zos", "z/OS")
              .Default(Platform);
 }
@@ -886,8 +889,6 @@ static llvm::StringRef canonicalizePlatformName(llvm::StringRef Platform) {
              .Case("macOSApplicationExtension", "macos_app_extension")
              .Case("tvOSApplicationExtension", "tvos_app_extension")
              .Case("watchOSApplicationExtension", "watchos_app_extension")
-             .Case("macCatalyst", "maccatalyst")
-             .Case("macCatalystApplicationExtension", "maccatalyst_app_extension")
              .Default(Platform);
 } }];
   let HasCustomParsing = 1;
@@ -2039,7 +2040,7 @@ def ObjCBridgeRelated : InheritableAttr {
 def NSErrorDomain : InheritableAttr {
   let Spellings = [GNU<"ns_error_domain">];
   let Subjects = SubjectList<[Enum], ErrorDiag>;
-  let Args = [DeclArgument<Var, "ErrorDomain">];
+  let Args = [IdentifierArgument<"ErrorDomain">];
   let Documentation = [NSErrorDomainDocs];
 }
 
@@ -2139,6 +2140,12 @@ def ObjCSubclassingRestricted : InheritableAttr {
   let Subjects = SubjectList<[ObjCInterface], ErrorDiag>;
   let Documentation = [ObjCSubclassingRestrictedDocs];
   let SimpleHandler = 1;
+}
+
+def ObjCCompleteDefinition : InheritableAttr {
+  let Spellings = [GNU<"objc_complete_definition">];
+  let Subjects = SubjectList<[ObjCInterface], ErrorDiag>;
+  let Documentation = [Undocumented];
 }
 
 def ObjCExplicitProtocolImpl : InheritableAttr {
@@ -2280,6 +2287,47 @@ def Regparm : TypeAttr {
   let Documentation = [RegparmDocs];
   // Represented as part of the enclosing function type.
   let ASTNode = 0;
+}
+
+def SwiftImportAsNonGeneric : InheritableAttr {
+  // This attribute has no spellings as it is only ever created implicitly
+  // from API notes.
+  let Spellings = [];
+  let SemaHandler = 0;
+  let Documentation = [Undocumented];
+}
+
+def SwiftImportPropertyAsAccessors : InheritableAttr { 
+  // This attribute has no spellings as it is only ever created implicitly
+  // from API notes.
+  let Spellings = [];
+  let SemaHandler = 0;
+  let Documentation = [Undocumented];
+}
+
+def SwiftVersioned : Attr {
+  // This attribute has no spellings as it is only ever created implicitly
+  // from API notes.
+  let Spellings = [];
+  let Args = [VersionArgument<"Version">, AttrArgument<"AttrToAdd">,
+              BoolArgument<"IsReplacedByActive">];
+  let SemaHandler = 0;
+  let Documentation = [Undocumented];
+}
+
+def SwiftVersionedRemoval : Attr {
+  // This attribute has no spellings as it is only ever created implicitly
+  // from API notes.
+  let Spellings = [];
+  let Args = [VersionArgument<"Version">, UnsignedArgument<"RawKind">,
+              BoolArgument<"IsReplacedByActive">];
+  let SemaHandler = 0;
+  let Documentation = [Undocumented];
+  let AdditionalMembers = [{
+    attr::Kind getAttrKindToRemove() const {
+      return static_cast<attr::Kind>(getRawKind());
+    }
+  }];
 }
 
 def SwiftAsyncName : InheritableAttr {
@@ -2734,6 +2782,14 @@ def ObjCRequiresPropertyDefs : InheritableAttr {
   let Subjects = SubjectList<[ObjCInterface], ErrorDiag>;
   let Documentation = [Undocumented];
   let SimpleHandler = 1;
+}
+
+def PointerAuth : TypeAttr {
+  let Spellings = [Keyword<"__ptrauth">];
+  let Args = [IntArgument<"Key">,
+              BoolArgument<"AddressDiscriminated", 1>,
+              IntArgument<"ExtraDiscriminator", 1>];
+  let Documentation = [PtrAuthDocs];
 }
 
 def Unused : InheritableAttr {

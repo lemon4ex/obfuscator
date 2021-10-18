@@ -119,7 +119,7 @@ define i1 @test_urem_even(i27 %X) nounwind {
 ; RV64-NEXT:    lui a2, 32768
 ; RV64-NEXT:    addiw a3, a2, -2
 ; RV64-NEXT:    and a0, a0, a3
-; RV64-NEXT:    srli a0, a0, 1
+; RV64-NEXT:    srliw a0, a0, 1
 ; RV64-NEXT:    or a0, a0, a1
 ; RV64-NEXT:    addiw a1, a2, -1
 ; RV64-NEXT:    and a0, a0, a1
@@ -157,7 +157,7 @@ define i1 @test_urem_even(i27 %X) nounwind {
 ; RV64M-NEXT:    lui a2, 32768
 ; RV64M-NEXT:    addiw a3, a2, -2
 ; RV64M-NEXT:    and a0, a0, a3
-; RV64M-NEXT:    srli a0, a0, 1
+; RV64M-NEXT:    srliw a0, a0, 1
 ; RV64M-NEXT:    or a0, a0, a1
 ; RV64M-NEXT:    addiw a1, a2, -1
 ; RV64M-NEXT:    and a0, a0, a1
@@ -193,7 +193,7 @@ define i1 @test_urem_even(i27 %X) nounwind {
 ; RV64MV-NEXT:    lui a2, 32768
 ; RV64MV-NEXT:    addiw a3, a2, -2
 ; RV64MV-NEXT:    and a0, a0, a3
-; RV64MV-NEXT:    srli a0, a0, 1
+; RV64MV-NEXT:    srliw a0, a0, 1
 ; RV64MV-NEXT:    or a0, a0, a1
 ; RV64MV-NEXT:    addiw a1, a2, -1
 ; RV64MV-NEXT:    and a0, a0, a1
@@ -419,7 +419,7 @@ define void @test_urem_vec(<3 x i11>* %X) nounwind {
 ; RV64-NEXT:    call __muldi3@plt
 ; RV64-NEXT:    slli a1, a0, 10
 ; RV64-NEXT:    andi a0, a0, 2046
-; RV64-NEXT:    srli a0, a0, 1
+; RV64-NEXT:    srliw a0, a0, 1
 ; RV64-NEXT:    or a0, a0, a1
 ; RV64-NEXT:    andi a0, a0, 2047
 ; RV64-NEXT:    addi a1, zero, 341
@@ -518,7 +518,7 @@ define void @test_urem_vec(<3 x i11>* %X) nounwind {
 ; RV64M-NEXT:    mul a1, a1, a4
 ; RV64M-NEXT:    slli a4, a1, 10
 ; RV64M-NEXT:    andi a1, a1, 2046
-; RV64M-NEXT:    srli a1, a1, 1
+; RV64M-NEXT:    srliw a1, a1, 1
 ; RV64M-NEXT:    or a1, a1, a4
 ; RV64M-NEXT:    andi a1, a1, 2047
 ; RV64M-NEXT:    addi a4, zero, 341
@@ -575,7 +575,7 @@ define void @test_urem_vec(<3 x i11>* %X) nounwind {
 ; RV32MV-NEXT:    vid.v v27
 ; RV32MV-NEXT:    vsub.vv v25, v25, v27
 ; RV32MV-NEXT:    vmul.vv v25, v25, v26
-; RV32MV-NEXT:    vadd.vv v26, v25, v25
+; RV32MV-NEXT:    vsll.vi v26, v25, 1
 ; RV32MV-NEXT:    addi a1, zero, 9
 ; RV32MV-NEXT:    vmv.v.i v27, 10
 ; RV32MV-NEXT:    vsetvli zero, zero, e16, mf2, tu, mu
@@ -640,7 +640,7 @@ define void @test_urem_vec(<3 x i11>* %X) nounwind {
 ; RV64MV-NEXT:    vid.v v27
 ; RV64MV-NEXT:    vsub.vv v25, v25, v27
 ; RV64MV-NEXT:    vmul.vv v25, v25, v26
-; RV64MV-NEXT:    vadd.vv v26, v25, v25
+; RV64MV-NEXT:    vsll.vi v26, v25, 1
 ; RV64MV-NEXT:    addi a1, zero, 9
 ; RV64MV-NEXT:    vmv.v.i v27, 10
 ; RV64MV-NEXT:    vsetvli zero, zero, e16, mf2, tu, mu

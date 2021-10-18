@@ -63,7 +63,7 @@ bool PPCCallLowering::lowerFormalArguments(MachineIRBuilder &MIRBuilder,
     if (DL.getTypeStoreSize(Arg.getType()).isZero())
       continue;
 
-    ArgInfo OrigArg{VRegs[I], Arg, I};
+    ArgInfo OrigArg{VRegs[I], Arg};
     setArgFlags(OrigArg, I + AttributeList::FirstArgIndex, DL, F);
     splitToValueTypes(OrigArg, SplitArgs, DL, F.getCallingConv());
     ++I;
@@ -86,19 +86,22 @@ void PPCIncomingValueHandler::assignValueToReg(Register ValVReg,
 }
 
 void PPCIncomingValueHandler::assignValueToAddress(Register ValVReg,
-                                                   Register Addr, LLT MemTy,
+                                                   Register Addr, uint64_t Size,
                                                    MachinePointerInfo &MPO,
                                                    CCValAssign &VA) {
+  assert((Size == 1 || Size == 2 || Size == 4 || Size == 8) &&
+         "Unsupported size");
+
   // define a lambda expression to load value
   auto BuildLoad = [](MachineIRBuilder &MIRBuilder, MachinePointerInfo &MPO,
-                      LLT MemTy, const DstOp &Res, Register Addr) {
+                      uint64_t Size, const DstOp &Res, Register Addr) {
     MachineFunction &MF = MIRBuilder.getMF();
-    auto *MMO = MF.getMachineMemOperand(MPO, MachineMemOperand::MOLoad, MemTy,
+    auto *MMO = MF.getMachineMemOperand(MPO, MachineMemOperand::MOLoad, Size,
                                         inferAlignFromPtrInfo(MF, MPO));
     return MIRBuilder.buildLoad(Res, Addr, *MMO);
   };
 
-  BuildLoad(MIRBuilder, MPO, MemTy, ValVReg, Addr);
+  BuildLoad(MIRBuilder, MPO, Size, ValVReg, Addr);
 }
 
 Register PPCIncomingValueHandler::getStackAddress(uint64_t Size, int64_t Offset,

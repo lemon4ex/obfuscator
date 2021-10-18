@@ -50,6 +50,7 @@ define internal i32 @caller(i32* %B) {
 ; NOT_CGSCC_NPM-LABEL: define {{[^@]+}}@caller
 ; NOT_CGSCC_NPM-SAME: (i32* noalias nocapture nofree noundef nonnull writeonly align 4 dereferenceable(4) [[B:%.*]]) #[[ATTR0]] {
 ; NOT_CGSCC_NPM-NEXT:    [[A:%.*]] = alloca i32, align 4
+; NOT_CGSCC_NPM-NEXT:    store i32 1, i32* [[A]], align 4
 ; NOT_CGSCC_NPM-NEXT:    [[C:%.*]] = call i32 @test(i32* noalias nocapture nofree noundef nonnull writeonly align 4 dereferenceable(4) [[B]]) #[[ATTR2:[0-9]+]]
 ; NOT_CGSCC_NPM-NEXT:    ret i32 undef
 ;
@@ -57,6 +58,7 @@ define internal i32 @caller(i32* %B) {
 ; IS__CGSCC_NPM-LABEL: define {{[^@]+}}@caller
 ; IS__CGSCC_NPM-SAME: (i32* noalias nocapture nofree noundef nonnull writeonly align 4 dereferenceable(4) [[B:%.*]]) #[[ATTR0]] {
 ; IS__CGSCC_NPM-NEXT:    [[A:%.*]] = alloca i32, align 4
+; IS__CGSCC_NPM-NEXT:    store i32 1, i32* [[A]], align 4
 ; IS__CGSCC_NPM-NEXT:    [[C:%.*]] = call i32 @test(i32* noalias nocapture nofree noundef nonnull writeonly align 4 dereferenceable(4) [[B]]) #[[ATTR2:[0-9]+]]
 ; IS__CGSCC_NPM-NEXT:    ret i32 undef
 ;
@@ -71,6 +73,7 @@ define i32 @callercaller() {
 ; IS__TUNIT____-LABEL: define {{[^@]+}}@callercaller
 ; IS__TUNIT____-SAME: () #[[ATTR1:[0-9]+]] {
 ; IS__TUNIT____-NEXT:    [[B:%.*]] = alloca i32, align 4
+; IS__TUNIT____-NEXT:    store i32 2, i32* [[B]], align 4
 ; IS__TUNIT____-NEXT:    [[X:%.*]] = call i32 @caller(i32* noalias nocapture nofree noundef nonnull writeonly align 4 dereferenceable(4) [[B]]) #[[ATTR2]]
 ; IS__TUNIT____-NEXT:    ret i32 0
 ;
@@ -78,6 +81,7 @@ define i32 @callercaller() {
 ; IS__CGSCC_OPM-LABEL: define {{[^@]+}}@callercaller
 ; IS__CGSCC_OPM-SAME: () #[[ATTR1:[0-9]+]] {
 ; IS__CGSCC_OPM-NEXT:    [[B:%.*]] = alloca i32, align 4
+; IS__CGSCC_OPM-NEXT:    store i32 2, i32* [[B]], align 4
 ; IS__CGSCC_OPM-NEXT:    [[X:%.*]] = call i32 @caller(i32* noalias nocapture nofree noundef nonnull writeonly align 4 dereferenceable(4) [[B]]) #[[ATTR3:[0-9]+]]
 ; IS__CGSCC_OPM-NEXT:    ret i32 0
 ;
@@ -85,6 +89,7 @@ define i32 @callercaller() {
 ; IS__CGSCC_NPM-LABEL: define {{[^@]+}}@callercaller
 ; IS__CGSCC_NPM-SAME: () #[[ATTR1:[0-9]+]] {
 ; IS__CGSCC_NPM-NEXT:    [[B:%.*]] = alloca i32, align 4
+; IS__CGSCC_NPM-NEXT:    store i32 2, i32* [[B]], align 4
 ; IS__CGSCC_NPM-NEXT:    [[X:%.*]] = call i32 @caller(i32* noalias nocapture nofree noundef nonnull writeonly align 4 dereferenceable(4) [[B]]) #[[ATTR3:[0-9]+]]
 ; IS__CGSCC_NPM-NEXT:    ret i32 0
 ;

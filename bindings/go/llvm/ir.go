@@ -290,7 +290,7 @@ const (
 	AnyComdatSelectionKind          ComdatSelectionKind = C.LLVMAnyComdatSelectionKind
 	ExactMatchComdatSelectionKind   ComdatSelectionKind = C.LLVMExactMatchComdatSelectionKind
 	LargestComdatSelectionKind      ComdatSelectionKind = C.LLVMLargestComdatSelectionKind
-	NoDeduplicateComdatSelectionKind ComdatSelectionKind = C.LLVMNoDeduplicateComdatSelectionKind
+	NoDuplicatesComdatSelectionKind ComdatSelectionKind = C.LLVMNoDuplicatesComdatSelectionKind
 	SameSizeComdatSelectionKind     ComdatSelectionKind = C.LLVMSameSizeComdatSelectionKind
 )
 

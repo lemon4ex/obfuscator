@@ -5,7 +5,7 @@ executable("llvm-tapi-diff") {
     "//llvm/lib/TextAPI",
   ]
   sources = [
-    "DiffEngine.cpp",
     "llvm-tapi-diff.cpp",
+    "DiffEngine.cpp",
   ]
 }

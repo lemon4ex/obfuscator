@@ -61,11 +61,9 @@ namespace llvm {
 /// not currently implement that in any mode.
 class SimpleLoopUnswitchPass : public PassInfoMixin<SimpleLoopUnswitchPass> {
   bool NonTrivial;
-  bool Trivial;
 
 public:
-  SimpleLoopUnswitchPass(bool NonTrivial = false, bool Trivial = true)
-      : NonTrivial(NonTrivial), Trivial(Trivial) {}
+  SimpleLoopUnswitchPass(bool NonTrivial = false) : NonTrivial(NonTrivial) {}
 
   PreservedAnalyses run(Loop &L, LoopAnalysisManager &AM,
                         LoopStandardAnalysisResults &AR, LPMUpdater &U);

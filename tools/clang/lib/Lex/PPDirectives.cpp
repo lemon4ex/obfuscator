@@ -708,9 +708,7 @@ void Preprocessor::SkipExcludedConditionalBlock(SourceLocation HashTokenLoc,
   // the #if block.
   CurPPLexer->LexingRawMode = false;
 
-  // The last skipped range isn't actually skipped yet if it's truncated
-  // by the end of the preamble; we'll resume parsing after the preamble.
-  if (Callbacks && (Tok.isNot(tok::eof) || !isRecordingPreamble()))
+  if (Callbacks)
     Callbacks->SourceRangeSkipped(
         SourceRange(HashTokenLoc, endLoc.isValid()
                                       ? endLoc
@@ -1480,7 +1478,7 @@ void Preprocessor::HandleUserDiagnosticDirective(Token &Tok,
 
   // Find the first non-whitespace character, so that we can make the
   // diagnostic more succinct.
-  StringRef Msg = Message.str().ltrim(' ');
+  StringRef Msg = StringRef(Message).ltrim(' ');
 
   if (isWarning)
     Diag(Tok, diag::pp_hash_warning) << Msg;
@@ -2021,10 +2019,6 @@ Preprocessor::ImportAction Preprocessor::HandleHeaderIncludeOrImport(
       CurDir, Filename, FilenameLoc, FilenameRange, FilenameTok,
       IsFrameworkFound, IsImportDecl, IsMapped, LookupFrom, LookupFromFile,
       LookupFilename, RelativePath, SearchPath, SuggestedModule, isAngled);
-
-  // Record the header's filename for later use.
-  if (File)
-    CurLexer->addInclude(OriginalFilename, File->getFileEntry(), FilenameLoc);
 
   if (usingPCHWithThroughHeader() && SkippingUntilPCHThroughHeader) {
     if (File && isPCHThroughHeader(&File->getFileEntry()))

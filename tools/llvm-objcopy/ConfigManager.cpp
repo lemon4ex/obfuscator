@@ -60,9 +60,7 @@ static const opt::OptTable::Info ObjcopyInfoTable[] = {
 
 class ObjcopyOptTable : public opt::OptTable {
 public:
-  ObjcopyOptTable() : OptTable(ObjcopyInfoTable) {
-    setGroupedShortOptions(true);
-  }
+  ObjcopyOptTable() : OptTable(ObjcopyInfoTable) {}
 };
 
 enum InstallNameToolID {
@@ -166,7 +164,7 @@ static const opt::OptTable::Info StripInfoTable[] = {
 
 class StripOptTable : public opt::OptTable {
 public:
-  StripOptTable() : OptTable(StripInfoTable) { setGroupedShortOptions(true); }
+  StripOptTable() : OptTable(StripInfoTable) {}
 };
 
 } // namespace
@@ -614,15 +612,16 @@ Expected<const WasmConfig &> ConfigManager::getWasmConfig() const {
       !Common.AllocSectionsPrefix.empty() ||
       Common.DiscardMode != DiscardType::None || ELF.NewSymbolVisibility ||
       !Common.SymbolsToAdd.empty() || !Common.RPathToAdd.empty() ||
-      !Common.SymbolsToGlobalize.empty() || !Common.SymbolsToLocalize.empty() ||
-      !Common.SymbolsToKeep.empty() || !Common.SymbolsToRemove.empty() ||
+      !Common.OnlySection.empty() || !Common.SymbolsToGlobalize.empty() ||
+      !Common.SymbolsToKeep.empty() || !Common.SymbolsToLocalize.empty() ||
+      !Common.SymbolsToRemove.empty() ||
       !Common.UnneededSymbolsToRemove.empty() ||
       !Common.SymbolsToWeaken.empty() || !Common.SymbolsToKeepGlobal.empty() ||
       !Common.SectionsToRename.empty() || !Common.SetSectionAlignment.empty() ||
       !Common.SetSectionFlags.empty() || !Common.SymbolsToRename.empty()) {
     return createStringError(
         llvm::errc::invalid_argument,
-        "only flags for section dumping, removal, and addition are supported");
+        "only add-section, dump-section, and remove-section are supported");
   }
 
   return Wasm;

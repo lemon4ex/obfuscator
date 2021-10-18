@@ -190,7 +190,6 @@ enum Kind {
   kw_convergent,
   kw_dereferenceable,
   kw_dereferenceable_or_null,
-  kw_elementtype,
   kw_inaccessiblememonly,
   kw_inaccessiblemem_or_argmemonly,
   kw_inlinehint,
@@ -261,7 +260,7 @@ enum Kind {
   kw_any,
   kw_exactmatch,
   kw_largest,
-  kw_nodeduplicate,
+  kw_noduplicates,
   kw_samesize,
 
   kw_eq,

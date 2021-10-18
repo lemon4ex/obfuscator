@@ -67,13 +67,11 @@ static void emitSCSPrologue(MachineFunction &MF, MachineBasicBlock &MBB,
   BuildMI(MBB, MI, DL, TII->get(IsRV64 ? RISCV::SD : RISCV::SW))
       .addReg(RAReg)
       .addReg(SCSPReg)
-      .addImm(0)
-      .setMIFlag(MachineInstr::FrameSetup);
+      .addImm(0);
   BuildMI(MBB, MI, DL, TII->get(RISCV::ADDI))
       .addReg(SCSPReg, RegState::Define)
       .addReg(SCSPReg)
-      .addImm(SlotSize)
-      .setMIFlag(MachineInstr::FrameSetup);
+      .addImm(SlotSize);
 }
 
 static void emitSCSEpilogue(MachineFunction &MF, MachineBasicBlock &MBB,
@@ -117,13 +115,11 @@ static void emitSCSEpilogue(MachineFunction &MF, MachineBasicBlock &MBB,
   BuildMI(MBB, MI, DL, TII->get(IsRV64 ? RISCV::LD : RISCV::LW))
       .addReg(RAReg, RegState::Define)
       .addReg(SCSPReg)
-      .addImm(-SlotSize)
-      .setMIFlag(MachineInstr::FrameDestroy);
+      .addImm(-SlotSize);
   BuildMI(MBB, MI, DL, TII->get(RISCV::ADDI))
       .addReg(SCSPReg, RegState::Define)
       .addReg(SCSPReg)
-      .addImm(-SlotSize)
-      .setMIFlag(MachineInstr::FrameDestroy);
+      .addImm(-SlotSize);
 }
 
 // Get the ID of the libcall used for spilling and restoring callee saved
@@ -310,8 +306,8 @@ getNonLibcallCSI(const MachineFunction &MF,
 void RISCVFrameLowering::adjustStackForRVV(MachineFunction &MF,
                                            MachineBasicBlock &MBB,
                                            MachineBasicBlock::iterator MBBI,
-                                           const DebugLoc &DL, int64_t Amount,
-                                           MachineInstr::MIFlag Flag) const {
+                                           const DebugLoc &DL,
+                                           int64_t Amount) const {
   assert(Amount != 0 && "Did not need to adjust stack pointer for RVV.");
 
   const RISCVInstrInfo *TII = STI.getInstrInfo();
@@ -321,14 +317,14 @@ void RISCVFrameLowering::adjustStackForRVV(MachineFunction &MF,
     Amount = -Amount;
     Opc = RISCV::SUB;
   }
+
   // 1. Multiply the number of v-slots to the length of registers
   Register FactorRegister =
-      TII->getVLENFactoredAmount(MF, MBB, MBBI, DL, Amount, Flag);
+      TII->getVLENFactoredAmount(MF, MBB, MBBI, DL, Amount);
   // 2. SP = SP - RVV stack size
   BuildMI(MBB, MBBI, DL, TII->get(Opc), SPReg)
       .addReg(SPReg)
-      .addReg(FactorRegister, RegState::Kill)
-      .setMIFlag(Flag);
+      .addReg(FactorRegister, RegState::Kill);
 }
 
 void RISCVFrameLowering::emitPrologue(MachineFunction &MF,
@@ -418,8 +414,7 @@ void RISCVFrameLowering::emitPrologue(MachineFunction &MF,
   unsigned CFIIndex = MF.addFrameInst(
       MCCFIInstruction::cfiDefCfaOffset(nullptr, RealStackSize));
   BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
-      .addCFIIndex(CFIIndex)
-      .setMIFlag(MachineInstr::FrameSetup);
+      .addCFIIndex(CFIIndex);
 
   const auto &CSI = MFI.getCalleeSavedInfo();
 
@@ -447,8 +442,7 @@ void RISCVFrameLowering::emitPrologue(MachineFunction &MF,
     unsigned CFIIndex = MF.addFrameInst(MCCFIInstruction::createOffset(
         nullptr, RI->getDwarfRegNum(Reg, true), Offset));
     BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
-        .addCFIIndex(CFIIndex)
-        .setMIFlag(MachineInstr::FrameSetup);
+        .addCFIIndex(CFIIndex);
   }
 
   // Generate new FP.
@@ -465,8 +459,7 @@ void RISCVFrameLowering::emitPrologue(MachineFunction &MF,
     unsigned CFIIndex = MF.addFrameInst(MCCFIInstruction::cfiDefCfa(
         nullptr, RI->getDwarfRegNum(FPReg, true), RVFI->getVarArgsSaveSize()));
     BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
-        .addCFIIndex(CFIIndex)
-        .setMIFlag(MachineInstr::FrameSetup);
+        .addCFIIndex(CFIIndex);
   }
 
   // Emit the second SP adjustment after saving callee saved registers.
@@ -484,14 +477,12 @@ void RISCVFrameLowering::emitPrologue(MachineFunction &MF,
       unsigned CFIIndex = MF.addFrameInst(
           MCCFIInstruction::cfiDefCfaOffset(nullptr, MFI.getStackSize()));
       BuildMI(MBB, MBBI, DL, TII->get(TargetOpcode::CFI_INSTRUCTION))
-          .addCFIIndex(CFIIndex)
-          .setMIFlag(MachineInstr::FrameSetup);
+          .addCFIIndex(CFIIndex);
     }
   }
 
   if (RVVStackSize)
-    adjustStackForRVV(MF, MBB, MBBI, DL, -RVVStackSize,
-                      MachineInstr::FrameSetup);
+    adjustStackForRVV(MF, MBB, MBBI, DL, -RVVStackSize);
 
   if (hasFP(MF)) {
     // Realign Stack
@@ -503,30 +494,24 @@ void RISCVFrameLowering::emitPrologue(MachineFunction &MF,
       if (isInt<12>(-(int)MaxAlignment.value())) {
         BuildMI(MBB, MBBI, DL, TII->get(RISCV::ANDI), SPReg)
             .addReg(SPReg)
-            .addImm(-(int)MaxAlignment.value())
-            .setMIFlag(MachineInstr::FrameSetup);
+            .addImm(-(int)MaxAlignment.value());
       } else {
         unsigned ShiftAmount = Log2(MaxAlignment);
         Register VR =
             MF.getRegInfo().createVirtualRegister(&RISCV::GPRRegClass);
         BuildMI(MBB, MBBI, DL, TII->get(RISCV::SRLI), VR)
             .addReg(SPReg)
-            .addImm(ShiftAmount)
-            .setMIFlag(MachineInstr::FrameSetup);
+            .addImm(ShiftAmount);
         BuildMI(MBB, MBBI, DL, TII->get(RISCV::SLLI), SPReg)
             .addReg(VR)
-            .addImm(ShiftAmount)
-            .setMIFlag(MachineInstr::FrameSetup);
+            .addImm(ShiftAmount);
       }
       // FP will be used to restore the frame in the epilogue, so we need
       // another base register BP to record SP after re-alignment. SP will
       // track the current stack after allocating variable sized objects.
       if (hasBP(MF)) {
         // move BP, SP
-        BuildMI(MBB, MBBI, DL, TII->get(RISCV::ADDI), BPReg)
-            .addReg(SPReg)
-            .addImm(0)
-            .setMIFlag(MachineInstr::FrameSetup);
+        TII->copyPhysReg(MBB, MBBI, DL, BPReg, SPReg, false);
       }
     }
   }
@@ -590,8 +575,7 @@ void RISCVFrameLowering::emitEpilogue(MachineFunction &MF,
               MachineInstr::FrameDestroy);
   } else {
     if (RVVStackSize)
-      adjustStackForRVV(MF, MBB, LastFrameDestroy, DL, RVVStackSize,
-                        MachineInstr::FrameDestroy);
+      adjustStackForRVV(MF, MBB, LastFrameDestroy, DL, RVVStackSize);
   }
 
   uint64_t FirstSPAdjustAmount = getFirstSPAdjustAmount(MF);

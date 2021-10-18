@@ -65,6 +65,9 @@ public:
     return Major == 0 && Minor == 0 && Subminor == 0 && Build == 0;
   }
 
+  /// Whether this is a non-empty version tuple.
+  explicit operator bool () const { return !empty(); }
+
   /// Retrieve the major version number.
   unsigned getMajor() const { return Major; }
 
@@ -94,20 +97,6 @@ public:
     if (HasBuild)
       return VersionTuple(Major, Minor, Subminor);
     return *this;
-  }
-
-  /// Return a version tuple that contains only components that are non-zero.
-  VersionTuple normalize() const {
-    VersionTuple Result = *this;
-    if (Result.Build == 0) {
-      Result.HasBuild = false;
-      if (Result.Subminor == 0) {
-        Result.HasSubminor = false;
-        if (Result.Minor == 0)
-          Result.HasMinor = false;
-      }
-    }
-    return Result;
   }
 
   /// Determine if two version numbers are equivalent. If not
@@ -176,28 +165,32 @@ public:
 /// Print a version number.
 raw_ostream &operator<<(raw_ostream &Out, const VersionTuple &V);
 
-// Provide DenseMapInfo for version tuples.
-template <> struct DenseMapInfo<VersionTuple> {
-  static inline VersionTuple getEmptyKey() { return VersionTuple(0x7FFFFFFF); }
-  static inline VersionTuple getTombstoneKey() {
-    return VersionTuple(0x7FFFFFFE);
-  }
-  static unsigned getHashValue(const VersionTuple &Value) {
-    unsigned Result = Value.getMajor();
-    if (auto Minor = Value.getMinor())
-      Result = detail::combineHashValue(Result, *Minor);
-    if (auto Subminor = Value.getSubminor())
-      Result = detail::combineHashValue(Result, *Subminor);
-    if (auto Build = Value.getBuild())
-      Result = detail::combineHashValue(Result, *Build);
+  // Provide DenseMapInfo for version tuples.
+  template<>
+  struct DenseMapInfo<VersionTuple> {
+    static inline VersionTuple getEmptyKey() {
+      return VersionTuple(0x7FFFFFFF);
+    }
+    static inline VersionTuple getTombstoneKey() {
+      return VersionTuple(0x7FFFFFFE);
+    }
+    static unsigned getHashValue(const VersionTuple &value) {
+      unsigned result = value.getMajor();
+      if (auto minor = value.getMinor())
+        result = detail::combineHashValue(result, *minor);
+      if (auto subminor = value.getSubminor())
+        result = detail::combineHashValue(result, *subminor);
+      if (auto build = value.getBuild())
+        result = detail::combineHashValue(result, *build);
 
-    return Result;
-  }
+      return result;
+    }
 
-  static bool isEqual(const VersionTuple &LHS, const VersionTuple &RHS) {
-    return LHS == RHS;
-  }
-};
+    static bool isEqual(const VersionTuple &lhs,
+                        const VersionTuple &rhs) {
+      return lhs == rhs;
+    }
+  };
 
 } // end namespace llvm
 #endif // LLVM_SUPPORT_VERSIONTUPLE_H

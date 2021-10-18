@@ -119,18 +119,15 @@ void TargetLoweringBase::ArgListEntry::setAttributes(const CallBase *Call,
   IsSwiftAsync = Call->paramHasAttr(ArgIdx, Attribute::SwiftAsync);
   IsSwiftError = Call->paramHasAttr(ArgIdx, Attribute::SwiftError);
   Alignment = Call->getParamStackAlign(ArgIdx);
-  IndirectType = nullptr;
-  assert(IsByVal + IsPreallocated + IsInAlloca <= 1 &&
-         "multiple ABI attributes?");
+  ByValType = nullptr;
   if (IsByVal) {
-    IndirectType = Call->getParamByValType(ArgIdx);
+    ByValType = Call->getParamByValType(ArgIdx);
     if (!Alignment)
       Alignment = Call->getParamAlign(ArgIdx);
   }
+  PreallocatedType = nullptr;
   if (IsPreallocated)
-    IndirectType = Call->getParamPreallocatedType(ArgIdx);
-  if (IsInAlloca)
-    IndirectType = Call->getParamInAllocaType(ArgIdx);
+    PreallocatedType = Call->getParamPreallocatedType(ArgIdx);
 }
 
 /// Generate a libcall taking the given operands as arguments and returning a
@@ -3056,19 +3053,6 @@ const Constant *TargetLowering::getTargetConstantFromLoad(LoadSDNode*) const {
   return nullptr;
 }
 
-bool TargetLowering::isGuaranteedNotToBeUndefOrPoisonForTargetNode(
-    SDValue Op, const APInt &DemandedElts, const SelectionDAG &DAG,
-    bool PoisonOnly, unsigned Depth) const {
-  assert(
-      (Op.getOpcode() >= ISD::BUILTIN_OP_END ||
-       Op.getOpcode() == ISD::INTRINSIC_WO_CHAIN ||
-       Op.getOpcode() == ISD::INTRINSIC_W_CHAIN ||
-       Op.getOpcode() == ISD::INTRINSIC_VOID) &&
-      "Should use isGuaranteedNotToBeUndefOrPoison if you don't know whether Op"
-      " is a target node!");
-  return false;
-}
-
 bool TargetLowering::isKnownNeverNaNForTargetNode(SDValue Op,
                                                   const SelectionDAG &DAG,
                                                   bool SNaN,
@@ -4687,8 +4671,7 @@ TargetLowering::ParseConstraints(const DataLayout &DL,
             getSimpleValueType(DL, STy->getElementType(ResNo));
       } else {
         assert(ResNo == 0 && "Asm only has one result!");
-        OpInfo.ConstraintVT =
-            getAsmOperandValueType(DL, Call.getType()).getSimpleVT();
+        OpInfo.ConstraintVT = getSimpleValueType(DL, Call.getType());
       }
       ++ResNo;
       break;
@@ -5606,7 +5589,7 @@ TargetLowering::prepareUREMEqFold(EVT SETCCVT, SDValue REMNode,
     return SDValue();
 
   SDValue PVal, KVal, QVal;
-  if (D.getOpcode() == ISD::BUILD_VECTOR) {
+  if (VT.isVector()) {
     if (HadTautologicalLanes) {
       // Try to turn PAmts into a splat, since we don't care about the values
       // that are currently '0'. If we can't, just keep '0'`s.
@@ -5620,13 +5603,6 @@ TargetLowering::prepareUREMEqFold(EVT SETCCVT, SDValue REMNode,
     PVal = DAG.getBuildVector(VT, DL, PAmts);
     KVal = DAG.getBuildVector(ShVT, DL, KAmts);
     QVal = DAG.getBuildVector(VT, DL, QAmts);
-  } else if (D.getOpcode() == ISD::SPLAT_VECTOR) {
-    assert(PAmts.size() == 1 && KAmts.size() == 1 && QAmts.size() == 1 &&
-           "Expected matchBinaryPredicate to return one element for "
-           "SPLAT_VECTORs");
-    PVal = DAG.getSplatVector(VT, DL, PAmts[0]);
-    KVal = DAG.getSplatVector(ShVT, DL, KAmts[0]);
-    QVal = DAG.getSplatVector(VT, DL, QAmts[0]);
   } else {
     PVal = PAmts[0];
     KVal = KAmts[0];
@@ -5651,8 +5627,10 @@ TargetLowering::prepareUREMEqFold(EVT SETCCVT, SDValue REMNode,
     // We need ROTR to do this.
     if (!DCI.isBeforeLegalizeOps() && !isOperationLegalOrCustom(ISD::ROTR, VT))
       return SDValue();
+    SDNodeFlags Flags;
+    Flags.setExact(true);
     // UREM: (rotr (mul N, P), K)
-    Op0 = DAG.getNode(ISD::ROTR, DL, VT, Op0, KVal);
+    Op0 = DAG.getNode(ISD::ROTR, DL, VT, Op0, KVal, Flags);
     Created.push_back(Op0.getNode());
   }
 
@@ -5916,8 +5894,10 @@ TargetLowering::prepareSREMEqFold(EVT SETCCVT, SDValue REMNode,
     // We need ROTR to do this.
     if (!DCI.isBeforeLegalizeOps() && !isOperationLegalOrCustom(ISD::ROTR, VT))
       return SDValue();
+    SDNodeFlags Flags;
+    Flags.setExact(true);
     // SREM: (rotr (add (mul N, P), A), K)
-    Op0 = DAG.getNode(ISD::ROTR, DL, VT, Op0, KVal);
+    Op0 = DAG.getNode(ISD::ROTR, DL, VT, Op0, KVal, Flags);
     Created.push_back(Op0.getNode());
   }
 
@@ -5941,7 +5921,7 @@ TargetLowering::prepareSREMEqFold(EVT SETCCVT, SDValue REMNode,
   if (!isOperationLegalOrCustom(ISD::SETEQ, VT) ||
       !isOperationLegalOrCustom(ISD::AND, VT) ||
       !isOperationLegalOrCustom(Cond, VT) ||
-      !isOperationLegalOrCustom(ISD::VSELECT, SETCCVT))
+      !isOperationLegalOrCustom(ISD::VSELECT, VT))
     return SDValue();
 
   Created.push_back(Fold.getNode());
@@ -5967,8 +5947,8 @@ TargetLowering::prepareSREMEqFold(EVT SETCCVT, SDValue REMNode,
   // 'MaskedIsZero'. If the divisor for channel was *NOT* INT_MIN, we pick
   // from 'Fold', else pick from 'MaskedIsZero'. Since 'DivisorIsIntMin' is
   // constant-folded, select can get lowered to a shuffle with constant mask.
-  SDValue Blended = DAG.getNode(ISD::VSELECT, DL, SETCCVT, DivisorIsIntMin,
-                                MaskedIsZero, Fold);
+  SDValue Blended =
+      DAG.getNode(ISD::VSELECT, DL, VT, DivisorIsIntMin, MaskedIsZero, Fold);
 
   return Blended;
 }
@@ -7801,51 +7781,39 @@ TargetLowering::IncrementMemoryAddress(SDValue Addr, SDValue Mask,
   return DAG.getNode(ISD::ADD, DL, AddrVT, Addr, Increment);
 }
 
-static SDValue clampDynamicVectorIndex(SelectionDAG &DAG, SDValue Idx,
-                                       EVT VecVT, const SDLoc &dl,
-                                       unsigned NumSubElts) {
+static SDValue clampDynamicVectorIndex(SelectionDAG &DAG,
+                                       SDValue Idx,
+                                       EVT VecVT,
+                                       const SDLoc &dl) {
   if (!VecVT.isScalableVector() && isa<ConstantSDNode>(Idx))
     return Idx;
 
   EVT IdxVT = Idx.getValueType();
   unsigned NElts = VecVT.getVectorMinNumElements();
   if (VecVT.isScalableVector()) {
-    // If this is a constant index and we know the value plus the number of the
-    // elements in the subvector minus one is less than the minimum number of
-    // elements then it's safe to return Idx.
+    // If this is a constant index and we know the value is less than the
+    // minimum number of elements then it's safe to return Idx.
     if (auto *IdxCst = dyn_cast<ConstantSDNode>(Idx))
-      if (IdxCst->getZExtValue() + (NumSubElts - 1) < NElts)
+      if (IdxCst->getZExtValue() < NElts)
         return Idx;
     SDValue VS =
         DAG.getVScale(dl, IdxVT, APInt(IdxVT.getFixedSizeInBits(), NElts));
-    unsigned SubOpcode = NumSubElts <= NElts ? ISD::SUB : ISD::USUBSAT;
-    SDValue Sub = DAG.getNode(SubOpcode, dl, IdxVT, VS,
-                              DAG.getConstant(NumSubElts, dl, IdxVT));
+    SDValue Sub =
+        DAG.getNode(ISD::SUB, dl, IdxVT, VS, DAG.getConstant(1, dl, IdxVT));
     return DAG.getNode(ISD::UMIN, dl, IdxVT, Idx, Sub);
   }
-  if (isPowerOf2_32(NElts) && NumSubElts == 1) {
+  if (isPowerOf2_32(NElts)) {
     APInt Imm = APInt::getLowBitsSet(IdxVT.getSizeInBits(), Log2_32(NElts));
     return DAG.getNode(ISD::AND, dl, IdxVT, Idx,
                        DAG.getConstant(Imm, dl, IdxVT));
   }
-  unsigned MaxIndex = NumSubElts < NElts ? NElts - NumSubElts : 0;
   return DAG.getNode(ISD::UMIN, dl, IdxVT, Idx,
-                     DAG.getConstant(MaxIndex, dl, IdxVT));
+                     DAG.getConstant(NElts - 1, dl, IdxVT));
 }
 
 SDValue TargetLowering::getVectorElementPointer(SelectionDAG &DAG,
                                                 SDValue VecPtr, EVT VecVT,
                                                 SDValue Index) const {
-  return getVectorSubVecPointer(
-      DAG, VecPtr, VecVT,
-      EVT::getVectorVT(*DAG.getContext(), VecVT.getVectorElementType(), 1),
-      Index);
-}
-
-SDValue TargetLowering::getVectorSubVecPointer(SelectionDAG &DAG,
-                                               SDValue VecPtr, EVT VecVT,
-                                               EVT SubVecVT,
-                                               SDValue Index) const {
   SDLoc dl(Index);
   // Make sure the index type is big enough to compute in.
   Index = DAG.getZExtOrTrunc(Index, dl, VecPtr.getValueType());
@@ -7857,13 +7825,7 @@ SDValue TargetLowering::getVectorSubVecPointer(SelectionDAG &DAG,
   assert(EltSize * 8 == EltVT.getFixedSizeInBits() &&
          "Converting bits to bytes lost precision");
 
-  // Scalable vectors don't need clamping as these are checked at compile time
-  if (SubVecVT.isFixedLengthVector()) {
-    assert(SubVecVT.getVectorElementType() == EltVT &&
-           "Sub-vector must be a fixed vector with matching element type");
-    Index = clampDynamicVectorIndex(DAG, Index, VecVT, dl,
-                                    SubVecVT.getVectorNumElements());
-  }
+  Index = clampDynamicVectorIndex(DAG, Index, VecVT, dl);
 
   EVT IdxVT = Index.getValueType();
 
@@ -8155,11 +8117,8 @@ TargetLowering::expandFixedPointMul(SDNode *Node, SelectionDAG &DAG) const {
       APInt MaxVal = APInt::getSignedMaxValue(VTSize);
       SDValue SatMin = DAG.getConstant(MinVal, dl, VT);
       SDValue SatMax = DAG.getConstant(MaxVal, dl, VT);
-      // Xor the inputs, if resulting sign bit is 0 the product will be
-      // positive, else negative.
-      SDValue Xor = DAG.getNode(ISD::XOR, dl, VT, LHS, RHS);
-      SDValue ProdNeg = DAG.getSetCC(dl, BoolVT, Xor, Zero, ISD::SETLT);
-      Result = DAG.getSelect(dl, VT, ProdNeg, SatMin, SatMax);
+      SDValue ProdNeg = DAG.getSetCC(dl, BoolVT, Product, Zero, ISD::SETLT);
+      Result = DAG.getSelect(dl, VT, ProdNeg, SatMax, SatMin);
       return DAG.getSelect(dl, VT, Overflow, Result, Product);
     } else if (!Signed && isOperationLegalOrCustom(ISD::UMULO, VT)) {
       SDValue Result =

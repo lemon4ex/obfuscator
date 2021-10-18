@@ -527,7 +527,7 @@ extern template class LoopBase<BasicBlock, Loop>;
 
 /// Represents a single loop in the control flow graph.  Note that not all SCCs
 /// in the CFG are necessarily loops.
-class LLVM_EXTERNAL_VISIBILITY Loop : public LoopBase<BasicBlock, Loop> {
+class Loop : public LoopBase<BasicBlock, Loop> {
 public:
   /// A range representing the start and end location of a loop.
   class LocRange {
@@ -588,9 +588,6 @@ public:
   /// variable.
   ///
   PHINode *getCanonicalInductionVariable() const;
-
-  /// Get the latch condition instruction.
-  ICmpInst *getLatchCmpInst() const;
 
   /// Obtain the unique incoming and back edge. Return false if they are
   /// non-unique or the loop is dead; otherwise, return true.

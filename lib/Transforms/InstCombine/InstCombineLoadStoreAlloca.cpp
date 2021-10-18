@@ -199,21 +199,13 @@ static Instruction *simplifyAllocaArraySize(InstCombinerImpl &IC,
       Type *IdxTy = IC.getDataLayout().getIntPtrType(AI.getType());
       Value *NullIdx = Constant::getNullValue(IdxTy);
       Value *Idx[2] = {NullIdx, NullIdx};
-      Instruction *NewI = GetElementPtrInst::CreateInBounds(
+      Instruction *GEP = GetElementPtrInst::CreateInBounds(
           NewTy, New, Idx, New->getName() + ".sub");
-      IC.InsertNewInstBefore(NewI, *It);
-
-      // Gracefully handle allocas in other address spaces.
-      if (AI.getType()->getPointerAddressSpace() !=
-          NewI->getType()->getPointerAddressSpace()) {
-        NewI =
-            CastInst::CreatePointerBitCastOrAddrSpaceCast(NewI, AI.getType());
-        IC.InsertNewInstBefore(NewI, *It);
-      }
+      IC.InsertNewInstBefore(GEP, *It);
 
       // Now make everything use the getelementptr instead of the original
       // allocation.
-      return IC.replaceInstUsesWith(AI, NewI);
+      return IC.replaceInstUsesWith(AI, GEP);
     }
   }
 
@@ -261,8 +253,8 @@ private:
 
 bool PointerReplacer::collectUsers(Instruction &I) {
   for (auto U : I.users()) {
-    auto *Inst = cast<Instruction>(&*U);
-    if (auto *Load = dyn_cast<LoadInst>(Inst)) {
+    Instruction *Inst = cast<Instruction>(&*U);
+    if (LoadInst *Load = dyn_cast<LoadInst>(Inst)) {
       if (Load->isVolatile())
         return false;
       Worklist.insert(Load);
@@ -270,12 +262,8 @@ bool PointerReplacer::collectUsers(Instruction &I) {
       Worklist.insert(Inst);
       if (!collectUsers(*Inst))
         return false;
-    } else if (auto *MI = dyn_cast<MemTransferInst>(Inst)) {
-      if (MI->isVolatile())
-        return false;
+    } else if (isa<MemTransferInst>(Inst)) {
       Worklist.insert(Inst);
-    } else if (Inst->isLifetimeStartOrEnd()) {
-      continue;
     } else {
       LLVM_DEBUG(dbgs() << "Cannot handle pointer user: " << *U << '\n');
       return false;

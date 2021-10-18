@@ -109,6 +109,11 @@ private:
     U.pVal = val;
   }
 
+  /// Determine if this APInt just has one word to store value.
+  ///
+  /// \returns true if the number of bits <= 64, false otherwise.
+  bool isSingleWord() const { return BitWidth <= APINT_BITS_PER_WORD; }
+
   /// Determine which word a bit is in.
   ///
   /// \returns the word position for the specified bit position.
@@ -350,11 +355,6 @@ public:
   /// @}
   /// \name Value Tests
   /// @{
-
-  /// Determine if this APInt just has one word to store value.
-  ///
-  /// \returns true if the number of bits <= 64, false otherwise.
-  bool isSingleWord() const { return BitWidth <= APINT_BITS_PER_WORD; }
 
   /// Determine sign of this APInt.
   ///

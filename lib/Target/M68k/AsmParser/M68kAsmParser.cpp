@@ -117,14 +117,14 @@ struct M68kMemOp {
 class M68kOperand : public MCParsedAsmOperand {
   typedef MCParsedAsmOperand Base;
 
-  enum class KindTy {
+  enum class Kind {
     Invalid,
     Token,
     Imm,
     MemOp,
   };
 
-  KindTy Kind;
+  Kind Kind;
   SMLoc Start, End;
   union {
     StringRef Token;
@@ -134,7 +134,7 @@ class M68kOperand : public MCParsedAsmOperand {
   };
 
 public:
-  M68kOperand(KindTy Kind, SMLoc Start, SMLoc End)
+  M68kOperand(enum Kind Kind, SMLoc Start, SMLoc End)
       : Base(), Kind(Kind), Start(Start), End(End) {}
 
   SMLoc getStartLoc() const override { return Start; }
@@ -143,7 +143,7 @@ public:
   void print(raw_ostream &OS) const override;
 
   bool isMem() const override { return false; }
-  bool isMemOp() const { return Kind == KindTy::MemOp; }
+  bool isMemOp() const { return Kind == Kind::MemOp; }
 
   static void addExpr(MCInst &Inst, const MCExpr *Expr);
 
@@ -248,7 +248,7 @@ void M68kOperand::addExpr(MCInst &Inst, const MCExpr *Expr) {
 
 // Reg
 bool M68kOperand::isReg() const {
-  return Kind == KindTy::MemOp && MemOp.Op == M68kMemOp::Kind::Reg;
+  return Kind == Kind::MemOp && MemOp.Op == M68kMemOp::Kind::Reg;
 }
 
 unsigned M68kOperand::getReg() const {
@@ -265,13 +265,13 @@ void M68kOperand::addRegOperands(MCInst &Inst, unsigned N) const {
 
 std::unique_ptr<M68kOperand> M68kOperand::createMemOp(M68kMemOp MemOp,
                                                       SMLoc Start, SMLoc End) {
-  auto Op = std::make_unique<M68kOperand>(KindTy::MemOp, Start, End);
+  auto Op = std::make_unique<M68kOperand>(Kind::MemOp, Start, End);
   Op->MemOp = MemOp;
   return Op;
 }
 
 // Token
-bool M68kOperand::isToken() const { return Kind == KindTy::Token; }
+bool M68kOperand::isToken() const { return Kind == Kind::Token; }
 StringRef M68kOperand::getToken() const {
   assert(isToken());
   return Token;
@@ -279,13 +279,13 @@ StringRef M68kOperand::getToken() const {
 
 std::unique_ptr<M68kOperand> M68kOperand::createToken(StringRef Token,
                                                       SMLoc Start, SMLoc End) {
-  auto Op = std::make_unique<M68kOperand>(KindTy::Token, Start, End);
+  auto Op = std::make_unique<M68kOperand>(Kind::Token, Start, End);
   Op->Token = Token;
   return Op;
 }
 
 // Imm
-bool M68kOperand::isImm() const { return Kind == KindTy::Imm; }
+bool M68kOperand::isImm() const { return Kind == Kind::Imm; }
 void M68kOperand::addImmOperands(MCInst &Inst, unsigned N) const {
   assert(isImm() && "wrong oeprand kind");
   assert((N == 1) && "can only handle one register operand");
@@ -295,7 +295,7 @@ void M68kOperand::addImmOperands(MCInst &Inst, unsigned N) const {
 
 std::unique_ptr<M68kOperand> M68kOperand::createImm(const MCExpr *Expr,
                                                     SMLoc Start, SMLoc End) {
-  auto Op = std::make_unique<M68kOperand>(KindTy::Imm, Start, End);
+  auto Op = std::make_unique<M68kOperand>(Kind::Imm, Start, End);
   Op->Expr = Expr;
   return Op;
 }
@@ -842,19 +842,19 @@ bool M68kAsmParser::MatchAndEmitInstruction(SMLoc Loc, unsigned &Opcode,
 
 void M68kOperand::print(raw_ostream &OS) const {
   switch (Kind) {
-  case KindTy::Invalid:
+  case Kind::Invalid:
     OS << "invalid";
     break;
 
-  case KindTy::Token:
+  case Kind::Token:
     OS << "token '" << Token << "'";
     break;
 
-  case KindTy::Imm:
+  case Kind::Imm:
     OS << "immediate " << Imm;
     break;
 
-  case KindTy::MemOp:
+  case Kind::MemOp:
     MemOp.print(OS);
     break;
   }

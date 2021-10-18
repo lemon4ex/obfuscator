@@ -1,5 +1,3 @@
-import("//llvm/lib/Target/targets.gni")
-
 executable("llvm-mca") {
   deps = [
     "//llvm/lib/MC",
@@ -32,9 +30,4 @@ executable("llvm-mca") {
     "Views/View.cpp",
     "llvm-mca.cpp",
   ]
-  defines = []
-  if (llvm_build_AMDGPU) {
-    deps += [ "//llvm/tools/llvm-mca/lib/AMDGPU" ]
-    defines += [ "HAS_AMDGPU" ]
-  }
 }

@@ -106,25 +106,6 @@ inline static unsigned getXRegFromWReg(unsigned Reg) {
   return Reg;
 }
 
-inline static unsigned getXRegFromXRegTuple(unsigned RegTuple) {
-  switch (RegTuple) {
-  case AArch64::X0_X1_X2_X3_X4_X5_X6_X7: return AArch64::X0;
-  case AArch64::X2_X3_X4_X5_X6_X7_X8_X9: return AArch64::X2;
-  case AArch64::X4_X5_X6_X7_X8_X9_X10_X11: return AArch64::X4;
-  case AArch64::X6_X7_X8_X9_X10_X11_X12_X13: return AArch64::X6;
-  case AArch64::X8_X9_X10_X11_X12_X13_X14_X15: return AArch64::X8;
-  case AArch64::X10_X11_X12_X13_X14_X15_X16_X17: return AArch64::X10;
-  case AArch64::X12_X13_X14_X15_X16_X17_X18_X19: return AArch64::X12;
-  case AArch64::X14_X15_X16_X17_X18_X19_X20_X21: return AArch64::X14;
-  case AArch64::X16_X17_X18_X19_X20_X21_X22_X23: return AArch64::X16;
-  case AArch64::X18_X19_X20_X21_X22_X23_X24_X25: return AArch64::X18;
-  case AArch64::X20_X21_X22_X23_X24_X25_X26_X27: return AArch64::X20;
-  case AArch64::X22_X23_X24_X25_X26_X27_X28_FP: return AArch64::X22;
-  }
-  // For anything else, return it unchanged.
-  return RegTuple;
-}
-
 static inline unsigned getBRegFromDReg(unsigned Reg) {
   switch (Reg) {
   case AArch64::D0:  return AArch64::B0;
@@ -364,14 +345,6 @@ struct SysAliasImm : SysAlias {
   constexpr SysAliasImm(const char *N, uint16_t E, uint16_t I, FeatureBitset F)
       : SysAlias(N, E, F), ImmValue(I) {}
 };
-
-namespace AArch64SVCR {
-  struct SVCR : SysAlias{
-    using SysAlias::SysAlias;
-  };
-  #define GET_SVCR_DECL
-  #include "AArch64GenSystemOperands.inc"
-}
 
 namespace AArch64AT{
   struct AT : SysAlias {
@@ -691,6 +664,45 @@ namespace AArch64II {
     MO_TAGGED = 0x400,
   };
 } // end namespace AArch64II
+
+//===----------------------------------------------------------------------===//
+// v8.3a Pointer Authentication
+//
+
+namespace AArch64PACKey {
+enum ID : uint8_t {
+  IA = 0,
+  IB = 1,
+  DA = 2,
+  DB = 3
+};
+} // namespace AArch64PACKey
+
+inline static StringRef AArch64PACKeyIDToString(AArch64PACKey::ID KeyID) {
+  switch (KeyID) {
+  case AArch64PACKey::IA:
+    return StringRef("ia");
+  case AArch64PACKey::IB:
+    return StringRef("ib");
+  case AArch64PACKey::DA:
+    return StringRef("da");
+  case AArch64PACKey::DB:
+    return StringRef("db");
+  }
+}
+
+inline static Optional<AArch64PACKey::ID>
+AArch64StringToPACKeyID(StringRef Name) {
+  if (Name == "ia")
+    return AArch64PACKey::IA;
+  if (Name == "ib")
+    return AArch64PACKey::IB;
+  if (Name == "da")
+    return AArch64PACKey::DA;
+  if (Name == "db")
+    return AArch64PACKey::DB;
+  return None;
+}
 
 namespace AArch64 {
 // The number of bits in a SVE register is architecturally defined

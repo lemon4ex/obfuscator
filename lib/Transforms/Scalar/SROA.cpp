@@ -2789,7 +2789,7 @@ private:
 
     // If the memset has a variable size, it cannot be split, just adjust the
     // pointer to the new alloca.
-    if (!isa<ConstantInt>(II.getLength())) {
+    if (!isa<Constant>(II.getLength())) {
       assert(!IsSplit);
       assert(NewBeginOffset == BeginOffset);
       II.setDest(getNewAllocaSlicePtr(IRB, OldPtr->getType()));
@@ -2811,11 +2811,10 @@ private:
       if (BeginOffset > NewAllocaBeginOffset ||
           EndOffset < NewAllocaEndOffset)
         return false;
-      // Length must be in range for FixedVectorType.
       auto *C = cast<ConstantInt>(II.getLength());
-      const uint64_t Len = C->getLimitedValue();
-      if (Len > std::numeric_limits<unsigned>::max())
+      if (C->getBitWidth() > 64)
         return false;
+      const auto Len = C->getZExtValue();
       auto *Int8Ty = IntegerType::getInt8Ty(NewAI.getContext());
       auto *SrcTy = FixedVectorType::get(Int8Ty, Len);
       return canConvertValue(DL, SrcTy, AllocaTy) &&

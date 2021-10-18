@@ -17,6 +17,7 @@
 #include "Arch/X86.h"
 #include "HIP.h"
 #include "Hexagon.h"
+#include "InputInfo.h"
 #include "clang/Basic/CharInfo.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/ObjCRuntime.h"
@@ -26,7 +27,6 @@
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/DriverDiagnostic.h"
-#include "clang/Driver/InputInfo.h"
 #include "clang/Driver/Job.h"
 #include "clang/Driver/Options.h"
 #include "clang/Driver/SanitizerArgs.h"
@@ -775,8 +775,7 @@ void tools::linkSanitizerRuntimeDeps(const ToolChain &TC,
     CmdArgs.push_back("-ldl");
   // Required for backtrace on some OSes
   if (TC.getTriple().isOSFreeBSD() ||
-      TC.getTriple().isOSNetBSD() ||
-      TC.getTriple().isOSOpenBSD())
+      TC.getTriple().isOSNetBSD())
     CmdArgs.push_back("-lexecinfo");
 }
 

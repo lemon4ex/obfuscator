@@ -212,13 +212,13 @@ public:
   int getInlinerVectorBonusPercent() { return 0; }
 
   InstructionCost getArithmeticReductionCost(
-      unsigned Opcode, VectorType *Ty, Optional<FastMathFlags> FMF,
+      unsigned Opcode, VectorType *Ty, bool IsPairwise,
       TTI::TargetCostKind CostKind = TTI::TCK_RecipThroughput);
 
   InstructionCost getIntrinsicInstrCost(const IntrinsicCostAttributes &ICA,
                                         TTI::TargetCostKind CostKind);
   InstructionCost getMinMaxReductionCost(
-      VectorType *Ty, VectorType *CondTy, bool IsUnsigned,
+      VectorType *Ty, VectorType *CondTy, bool IsPairwiseForm, bool IsUnsigned,
       TTI::TargetCostKind CostKind = TTI::TCK_RecipThroughput);
 };
 

@@ -148,6 +148,9 @@ public:
   /// eventually be exposed, for use in "private" modules.
   std::string ExportAsModule;
 
+  /// For the debug info, the path to this module's .apinotes file, if any.
+  std::string APINotesFile;
+  
   /// Does this Module scope describe part of the purview of a named C++ module?
   bool isModulePurview() const {
     return Kind == ModuleInterfaceUnit || Kind == PrivateModuleFragment;
@@ -306,6 +309,9 @@ public:
   /// Whether this module came from a "private" module map, found next
   /// to a regular (public) module map.
   unsigned ModuleMapIsPrivate : 1;
+
+  /// \brief Whether this is a module who has its swift_names inferred.
+  unsigned IsSwiftInferImportAsMember : 1;
 
   /// Describes the visibility of the various names within a
   /// particular module.

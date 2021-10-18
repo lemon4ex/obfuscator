@@ -262,128 +262,6 @@ TEST_F(FormatTest, RemovesEmptyLines) {
                    "}",
                    getGoogleStyle()));
 
-  auto CustomStyle = clang::format::getLLVMStyle();
-  CustomStyle.BreakBeforeBraces = clang::format::FormatStyle::BS_Custom;
-  CustomStyle.BraceWrapping.AfterNamespace = true;
-  CustomStyle.KeepEmptyLinesAtTheStartOfBlocks = false;
-  EXPECT_EQ("namespace N\n"
-            "{\n"
-            "\n"
-            "int i;\n"
-            "}",
-            format("namespace N\n"
-                   "{\n"
-                   "\n"
-                   "\n"
-                   "int    i;\n"
-                   "}",
-                   CustomStyle));
-  EXPECT_EQ("/* something */ namespace N\n"
-            "{\n"
-            "\n"
-            "int i;\n"
-            "}",
-            format("/* something */ namespace N {\n"
-                   "\n"
-                   "\n"
-                   "int    i;\n"
-                   "}",
-                   CustomStyle));
-  EXPECT_EQ("inline namespace N\n"
-            "{\n"
-            "\n"
-            "int i;\n"
-            "}",
-            format("inline namespace N\n"
-                   "{\n"
-                   "\n"
-                   "\n"
-                   "int    i;\n"
-                   "}",
-                   CustomStyle));
-  EXPECT_EQ("/* something */ inline namespace N\n"
-            "{\n"
-            "\n"
-            "int i;\n"
-            "}",
-            format("/* something */ inline namespace N\n"
-                   "{\n"
-                   "\n"
-                   "int    i;\n"
-                   "}",
-                   CustomStyle));
-  EXPECT_EQ("export namespace N\n"
-            "{\n"
-            "\n"
-            "int i;\n"
-            "}",
-            format("export namespace N\n"
-                   "{\n"
-                   "\n"
-                   "int    i;\n"
-                   "}",
-                   CustomStyle));
-  EXPECT_EQ("namespace a\n"
-            "{\n"
-            "namespace b\n"
-            "{\n"
-            "\n"
-            "class AA {};\n"
-            "\n"
-            "} // namespace b\n"
-            "} // namespace a\n",
-            format("namespace a\n"
-                   "{\n"
-                   "namespace b\n"
-                   "{\n"
-                   "\n"
-                   "\n"
-                   "class AA {};\n"
-                   "\n"
-                   "\n"
-                   "}\n"
-                   "}\n",
-                   CustomStyle));
-  EXPECT_EQ("namespace A /* comment */\n"
-            "{\n"
-            "class B {}\n"
-            "} // namespace A",
-            format("namespace A /* comment */ { class B {} }", CustomStyle));
-  EXPECT_EQ("namespace A\n"
-            "{ /* comment */\n"
-            "class B {}\n"
-            "} // namespace A",
-            format("namespace A {/* comment */ class B {} }", CustomStyle));
-  EXPECT_EQ("namespace A\n"
-            "{ /* comment */\n"
-            "\n"
-            "class B {}\n"
-            "\n"
-            ""
-            "} // namespace A",
-            format("namespace A { /* comment */\n"
-                   "\n"
-                   "\n"
-                   "class B {}\n"
-                   "\n"
-                   "\n"
-                   "}",
-                   CustomStyle));
-  EXPECT_EQ("namespace A /* comment */\n"
-            "{\n"
-            "\n"
-            "class B {}\n"
-            "\n"
-            "} // namespace A",
-            format("namespace A/* comment */ {\n"
-                   "\n"
-                   "\n"
-                   "class B {}\n"
-                   "\n"
-                   "\n"
-                   "}",
-                   CustomStyle));
-
   // ...but do keep inlining and removing empty lines for non-block extern "C"
   // functions.
   verifyFormat("extern \"C\" int f() { return 42; }", getGoogleStyle());
@@ -8209,76 +8087,6 @@ TEST_F(FormatTest, ReturnTypeBreakingStyle) {
                "}\n",
                Style);
 
-  Style.BreakBeforeBraces = FormatStyle::BS_Custom;
-  Style.BraceWrapping.AfterFunction = true;
-  verifyFormat("int f(i);\n" // No break here.
-               "int\n"       // Break here.
-               "f(i)\n"
-               "{\n"
-               "  return i + 1;\n"
-               "}\n"
-               "int\n" // Break here.
-               "f(i)\n"
-               "{\n"
-               "  return i + 1;\n"
-               "};",
-               Style);
-  verifyFormat("int f(a, b, c);\n" // No break here.
-               "int\n"             // Break here.
-               "f(a, b, c)\n"      // Break here.
-               "short a, b;\n"
-               "float c;\n"
-               "{\n"
-               "  return a + b < c;\n"
-               "}\n"
-               "int\n"        // Break here.
-               "f(a, b, c)\n" // Break here.
-               "short a, b;\n"
-               "float c;\n"
-               "{\n"
-               "  return a + b < c;\n"
-               "};",
-               Style);
-  verifyFormat("byte *\n" // Break here.
-               "f(a)\n"   // Break here.
-               "byte a[];\n"
-               "{\n"
-               "  return a;\n"
-               "}",
-               Style);
-  verifyFormat("bool f(int a, int) override;\n"
-               "Bar g(int a, Bar) final;\n"
-               "Bar h(a, Bar) final;",
-               Style);
-  verifyFormat("int\n"
-               "f(a)",
-               Style);
-  verifyFormat("bool\n"
-               "f(size_t = 0, bool b = false)\n"
-               "{\n"
-               "  return !b;\n"
-               "}",
-               Style);
-
-  // The return breaking style doesn't affect:
-  // * function and object definitions with attribute-like macros
-  verifyFormat("Tttttttttttttttttttttttt ppppppppppppppp\n"
-               "    ABSL_GUARDED_BY(mutex) = {};",
-               getGoogleStyleWithColumns(40));
-  verifyFormat("Tttttttttttttttttttttttt ppppppppppppppp\n"
-               "    ABSL_GUARDED_BY(mutex);  // comment",
-               getGoogleStyleWithColumns(40));
-  verifyFormat("Tttttttttttttttttttttttt ppppppppppppppp\n"
-               "    ABSL_GUARDED_BY(mutex1)\n"
-               "        ABSL_GUARDED_BY(mutex2);",
-               getGoogleStyleWithColumns(40));
-  verifyFormat("Tttttt f(int a, int b)\n"
-               "    ABSL_GUARDED_BY(mutex1)\n"
-               "        ABSL_GUARDED_BY(mutex2);",
-               getGoogleStyleWithColumns(40));
-  // * typedefs
-  verifyFormat("typedef ATTR(X) char x;", getGoogleStyle());
-
   Style = getGNUStyle();
 
   // Test for comments at the end of function declarations.
@@ -9483,7 +9291,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyFormat("vector<A(uint64_t) * attr> v;", TypeMacros); // multiplication
 
   FormatStyle CustomQualifier = getLLVMStyle();
-  // Add identifiers that should not be parsed as a qualifier by default.
+  // Add indentifers that should not be parsed as a qualifier by default.
   CustomQualifier.AttributeMacros.push_back("__my_qualifier");
   CustomQualifier.AttributeMacros.push_back("_My_qualifier");
   CustomQualifier.AttributeMacros.push_back("my_other_qualifier");
@@ -16459,37 +16267,6 @@ TEST_F(FormatTest, AlignWithLineBreaks) {
                "                                                  std::forward_as_tuple(id, uniqueId, name, threadCreation));\n"
                "  const X    newEntry2      = Entries.emplaceHint(std::piecewise_construct, std::forward_as_tuple(uniqueId),\n"
                "                                                  std::forward_as_tuple(id, uniqueId, name, threadCreation));\n"
-               "}",
-               Style);
-  // clang-format on
-
-  Style = getLLVMStyleWithColumns(120);
-  Style.AlignConsecutiveAssignments = FormatStyle::ACS_Consecutive;
-  Style.ContinuationIndentWidth = 4;
-  Style.IndentWidth = 4;
-
-  // clang-format off
-  verifyFormat("void SomeFunc() {\n"
-               "    newWatcher.maxAgeUsec = ToLegacyTimestamp(GetMaxAge(FromLegacyTimestamp<milliseconds>(monitorFrequencyUsec),\n"
-               "                                                        seconds(std::uint64_t(maxSampleAge)), maxKeepSamples));\n"
-               "    newWatcher.maxAge     = ToLegacyTimestamp(GetMaxAge(FromLegacyTimestamp<milliseconds>(monitorFrequencyUsec),\n"
-               "                                                        seconds(std::uint64_t(maxSampleAge)), maxKeepSamples));\n"
-               "    newWatcher.max        = ToLegacyTimestamp(GetMaxAge(FromLegacyTimestamp<milliseconds>(monitorFrequencyUsec),\n"
-               "                                                        seconds(std::uint64_t(maxSampleAge)), maxKeepSamples));\n"
-               "}",
-               Style);
-  // clang-format on
-
-  Style.BinPackArguments = false;
-
-  // clang-format off
-  verifyFormat("void SomeFunc() {\n"
-               "    newWatcher.maxAgeUsec = ToLegacyTimestamp(GetMaxAge(\n"
-               "        FromLegacyTimestamp<milliseconds>(monitorFrequencyUsec), seconds(std::uint64_t(maxSampleAge)), maxKeepSamples));\n"
-               "    newWatcher.maxAge     = ToLegacyTimestamp(GetMaxAge(\n"
-               "        FromLegacyTimestamp<milliseconds>(monitorFrequencyUsec), seconds(std::uint64_t(maxSampleAge)), maxKeepSamples));\n"
-               "    newWatcher.max        = ToLegacyTimestamp(GetMaxAge(\n"
-               "        FromLegacyTimestamp<milliseconds>(monitorFrequencyUsec), seconds(std::uint64_t(maxSampleAge)), maxKeepSamples));\n"
                "}",
                Style);
   // clang-format on

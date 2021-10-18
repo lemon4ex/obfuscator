@@ -21,7 +21,6 @@
 #define LLVM_CODEGEN_GLOBALISEL_LEGALIZERHELPER_H
 
 #include "llvm/CodeGen/GlobalISel/CallLowering.h"
-#include "llvm/CodeGen/GlobalISel/GenericMachineInstrs.h"
 #include "llvm/CodeGen/GlobalISel/MachineIRBuilder.h"
 #include "llvm/CodeGen/LowLevelType.h"
 #include "llvm/CodeGen/MachineFunctionPass.h"
@@ -294,8 +293,6 @@ public:
 
   LegalizeResult moreElementsVectorPhi(MachineInstr &MI, unsigned TypeIdx,
                                        LLT MoreTy);
-  LegalizeResult moreElementsVectorShuffle(MachineInstr &MI, unsigned TypeIdx,
-                                           LLT MoreTy);
 
   LegalizeResult fewerElementsVectorUnmergeValues(MachineInstr &MI,
                                                   unsigned TypeIdx,
@@ -309,8 +306,8 @@ public:
   LegalizeResult fewerElementsVectorMulo(MachineInstr &MI, unsigned TypeIdx,
                                          LLT NarrowTy);
 
-  LegalizeResult reduceLoadStoreWidth(GLoadStore &MI, unsigned TypeIdx,
-                                      LLT NarrowTy);
+  LegalizeResult
+  reduceLoadStoreWidth(MachineInstr &MI, unsigned TypeIdx, LLT NarrowTy);
 
   /// Legalize an instruction by reducing the operation width, either by
   /// narrowing the type of the operation or by reducing the number of elements
@@ -358,8 +355,8 @@ public:
                                         LLT CastTy);
 
   LegalizeResult lowerBitcast(MachineInstr &MI);
-  LegalizeResult lowerLoad(GAnyLoad &MI);
-  LegalizeResult lowerStore(GStore &MI);
+  LegalizeResult lowerLoad(MachineInstr &MI);
+  LegalizeResult lowerStore(MachineInstr &MI);
   LegalizeResult lowerBitCount(MachineInstr &MI);
   LegalizeResult lowerFunnelShiftWithInverse(MachineInstr &MI);
   LegalizeResult lowerFunnelShiftAsShifts(MachineInstr &MI);

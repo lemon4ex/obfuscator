@@ -19,7 +19,6 @@
 #include "llvm/ADT/None.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/ADT/Twine.h"
@@ -956,17 +955,8 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
 
     break;
   }
+  case Intrinsic::umax:
   case Intrinsic::umin: {
-    Value *I0 = II->getArgOperand(0), *I1 = II->getArgOperand(1);
-    // umin(x, 1) == zext(x != 0)
-    if (match(I1, m_One())) {
-      Value *Zero = Constant::getNullValue(I0->getType());
-      Value *Cmp = Builder.CreateICmpNE(I0, Zero);
-      return CastInst::Create(Instruction::ZExt, Cmp, II->getType());
-    }
-    LLVM_FALLTHROUGH;
-  }
-  case Intrinsic::umax: {
     Value *I0 = II->getArgOperand(0), *I1 = II->getArgOperand(1);
     Value *X, *Y;
     if (match(I0, m_ZExt(m_Value(X))) && match(I1, m_ZExt(m_Value(Y))) &&
@@ -1050,11 +1040,6 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
 
     if (Instruction *Sel = foldClampRangeOfTwo(II, Builder))
       return Sel;
-
-    if (match(I1, m_ImmConstant()))
-      if (auto *Sel = dyn_cast<SelectInst>(I0))
-        if (Instruction *R = FoldOpIntoSelect(*II, Sel))
-          return R;
 
     break;
   }
@@ -1905,8 +1890,10 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
       unsigned IdxN = cast<ConstantInt>(Idx)->getZExtValue();
 
       // An insert that entirely overwrites Vec with SubVec is a nop.
-      if (VecNumElts == SubVecNumElts)
-        return replaceInstUsesWith(CI, SubVec);
+      if (VecNumElts == SubVecNumElts) {
+        replaceInstUsesWith(CI, SubVec);
+        return eraseInstFromFunction(CI);
+      }
 
       // Widen SubVec into a vector of the same width as Vec, since
       // shufflevector requires the two input vectors to be the same width.
@@ -1930,7 +1917,8 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
         Mask.push_back(i);
 
       Value *Shuffle = Builder.CreateShuffleVector(Vec, WidenShuffle, Mask);
-      return replaceInstUsesWith(CI, Shuffle);
+      replaceInstUsesWith(CI, Shuffle);
+      return eraseInstFromFunction(CI);
     }
     break;
   }
@@ -1959,7 +1947,8 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
         Mask.push_back(IdxN + i);
 
       Value *Shuffle = Builder.CreateShuffleVector(Vec, Mask);
-      return replaceInstUsesWith(CI, Shuffle);
+      replaceInstUsesWith(CI, Shuffle);
+      return eraseInstFromFunction(CI);
     }
     break;
   }
@@ -1986,74 +1975,9 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
                  "Expected or reduction.");
           Res = Builder.CreateIsNotNull(Res);
         }
-        return replaceInstUsesWith(CI, Res);
+        replaceInstUsesWith(CI, Res);
+        return eraseInstFromFunction(CI);
       }
-    LLVM_FALLTHROUGH;
-  }
-  case Intrinsic::vector_reduce_add: {
-    if (IID == Intrinsic::vector_reduce_add) {
-      // Convert vector_reduce_add(ZExt(<n x i1>)) to
-      // ZExtOrTrunc(ctpop(bitcast <n x i1> to in)).
-      // Convert vector_reduce_add(SExt(<n x i1>)) to
-      // -ZExtOrTrunc(ctpop(bitcast <n x i1> to in)).
-      // Convert vector_reduce_add(<n x i1>) to
-      // Trunc(ctpop(bitcast <n x i1> to in)).
-      Value *Arg = II->getArgOperand(0);
-      Value *Vect;
-      if (match(Arg, m_ZExtOrSExtOrSelf(m_Value(Vect)))) {
-        if (auto *FTy = dyn_cast<FixedVectorType>(Vect->getType()))
-          if (FTy->getElementType() == Builder.getInt1Ty()) {
-            Value *V = Builder.CreateBitCast(
-                Vect, Builder.getIntNTy(FTy->getNumElements()));
-            Value *Res = Builder.CreateUnaryIntrinsic(Intrinsic::ctpop, V);
-            if (Res->getType() != II->getType())
-              Res = Builder.CreateZExtOrTrunc(Res, II->getType());
-            if (Arg != Vect &&
-                cast<Instruction>(Arg)->getOpcode() == Instruction::SExt)
-              Res = Builder.CreateNeg(Res);
-            return replaceInstUsesWith(CI, Res);
-          }
-      }
-    }
-    LLVM_FALLTHROUGH;
-  }
-  case Intrinsic::vector_reduce_mul:
-  case Intrinsic::vector_reduce_xor:
-  case Intrinsic::vector_reduce_umax:
-  case Intrinsic::vector_reduce_umin:
-  case Intrinsic::vector_reduce_smax:
-  case Intrinsic::vector_reduce_smin:
-  case Intrinsic::vector_reduce_fmax:
-  case Intrinsic::vector_reduce_fmin:
-  case Intrinsic::vector_reduce_fadd:
-  case Intrinsic::vector_reduce_fmul: {
-    bool CanBeReassociated = (IID != Intrinsic::vector_reduce_fadd &&
-                              IID != Intrinsic::vector_reduce_fmul) ||
-                             II->hasAllowReassoc();
-    const unsigned ArgIdx = (IID == Intrinsic::vector_reduce_fadd ||
-                             IID == Intrinsic::vector_reduce_fmul)
-                                ? 1
-                                : 0;
-    Value *Arg = II->getArgOperand(ArgIdx);
-    Value *V;
-    ArrayRef<int> Mask;
-    if (!isa<FixedVectorType>(Arg->getType()) || !CanBeReassociated ||
-        !match(Arg, m_Shuffle(m_Value(V), m_Undef(), m_Mask(Mask))) ||
-        !cast<ShuffleVectorInst>(Arg)->isSingleSource())
-      break;
-    int Sz = Mask.size();
-    SmallBitVector UsedIndices(Sz);
-    for (int Idx : Mask) {
-      if (Idx == UndefMaskElem || UsedIndices.test(Idx))
-        break;
-      UsedIndices.set(Idx);
-    }
-    // Can remove shuffle iff just shuffled elements, no repeats, undefs, or
-    // other changes.
-    if (UsedIndices.all()) {
-      replaceUse(II->getOperandUse(ArgIdx), V);
-      return nullptr;
-    }
     break;
   }
   default: {
@@ -2227,6 +2151,81 @@ static IntrinsicInst *findInitTrampoline(Value *Callee) {
   return nullptr;
 }
 
+Instruction *InstCombinerImpl::tryCombinePtrAuthCall(CallBase &Call) {
+  Value *Callee = Call.getCalledOperand();
+  auto *IPC = dyn_cast<IntToPtrInst>(Callee);
+  if (!IPC || !IPC->isNoopCast(DL))
+    return nullptr;
+
+  IntrinsicInst *II = dyn_cast<IntrinsicInst>(IPC->getOperand(0));
+  if (!II)
+    return nullptr;
+
+  auto PtrAuthBundleOrNone = Call.getOperandBundle(LLVMContext::OB_ptrauth);
+  assert(Call.getNumOperandBundles() <= 1 &&
+         "unimplemented support for ptrauth and other bundle");
+
+  Value *NewCallee = nullptr;
+  SmallVector<OperandBundleDef, 1> NewBundles;
+  switch (II->getIntrinsicID()) {
+  default:
+    return nullptr;
+
+  // call(ptrauth_resign(p)), ["ptrauth"()] ->  call p, ["ptrauth"()]
+  // assuming the call bundle and the sign operands match.
+  case Intrinsic::ptrauth_resign: {
+    if (!PtrAuthBundleOrNone)
+      return nullptr;
+    auto PtrAuthBundle = *PtrAuthBundleOrNone;
+    if (II->getOperand(3) != PtrAuthBundle.Inputs[0] ||
+        II->getOperand(4) != PtrAuthBundle.Inputs[1])
+      return nullptr;
+
+    Value *NewBundleOps[] = {II->getOperand(1), II->getOperand(2)};
+    NewBundles.emplace_back("ptrauth", NewBundleOps);
+    NewCallee = II->getOperand(0);
+    break;
+  }
+
+  // call(ptrauth_sign(p)), ["ptrauth"()] ->  call p
+  // assuming the call bundle and the sign operands match.
+  case Intrinsic::ptrauth_sign: {
+    if (!PtrAuthBundleOrNone)
+      return nullptr;
+    auto PtrAuthBundle = *PtrAuthBundleOrNone;
+    if (II->getOperand(1) != PtrAuthBundle.Inputs[0] ||
+        II->getOperand(2) != PtrAuthBundle.Inputs[1])
+      return nullptr;
+    NewCallee = II->getOperand(0);
+    break;
+  }
+
+  // call(ptrauth_auth(p)) ->  call p, ["ptrauth"()]
+  case Intrinsic::ptrauth_auth: {
+    if (PtrAuthBundleOrNone)
+      return nullptr;
+    Value *NewBundleOps[] = {II->getOperand(1), II->getOperand(2)};
+    NewBundles.emplace_back("ptrauth", NewBundleOps);
+    NewCallee = II->getOperand(0);
+    break;
+  }
+  }
+
+  if (!NewCallee)
+    return nullptr;
+
+  NewCallee = Builder.CreateBitOrPointerCast(NewCallee, Callee->getType());
+  CallBase *NewCall = nullptr;
+  if (auto *CI = dyn_cast<CallInst>(&Call)) {
+    NewCall = CallInst::Create(CI, NewBundles);
+  } else {
+    auto *IKI = cast<InvokeInst>(&Call);
+    NewCall = InvokeInst::Create(IKI, NewBundles);
+  }
+  NewCall->setCalledOperand(NewCallee);
+  return NewCall;
+}
+
 void InstCombinerImpl::annotateAnyAllocSite(CallBase &Call, const TargetLibraryInfo *TLI) {
   unsigned NumArgs = Call.getNumArgOperands();
   ConstantInt *Op0C = dyn_cast<ConstantInt>(Call.getOperand(0));
@@ -2392,6 +2391,10 @@ Instruction *InstCombinerImpl::visitCallBase(CallBase &Call) {
 
   if (IntrinsicInst *II = findInitTrampoline(Callee))
     return transformCallThroughTrampoline(Call, *II);
+
+  // Combine calls involving pointer authentication
+  if (Instruction *NewCall = tryCombinePtrAuthCall(Call))
+    return NewCall;
 
   // TODO: Drop this transform once opaque pointer transition is done.
   FunctionType *FTy = Call.getFunctionType();

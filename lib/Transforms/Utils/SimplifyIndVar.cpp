@@ -1359,7 +1359,7 @@ WidenIV::getExtendedOperandRecurrence(WidenIV::NarrowIVDefUse DU) {
 /// so, return the extended recurrence and the kind of extension used. Otherwise
 /// return {nullptr, Unknown}.
 WidenIV::WidenedRecTy WidenIV::getWideRecurrence(WidenIV::NarrowIVDefUse DU) {
-  if (!DU.NarrowUse->getType()->isIntegerTy())
+  if (!SE->isSCEVable(DU.NarrowUse->getType()))
     return {nullptr, Unknown};
 
   const SCEV *NarrowExpr = SE->getSCEV(DU.NarrowUse);

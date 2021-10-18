@@ -440,15 +440,12 @@ auto AlignVectors::createAdjustedPointer(IRBuilder<> &Builder, Value *Ptr,
     -> Value * {
   // The adjustment is in bytes, but if it's a multiple of the type size,
   // we don't need to do pointer casts.
-  auto *PtrTy = cast<PointerType>(Ptr->getType());
-  if (!PtrTy->isOpaque()) {
-    Type *ElemTy = PtrTy->getElementType();
-    int ElemSize = HVC.getSizeOf(ElemTy);
-    if (Adjust % ElemSize == 0) {
-      Value *Tmp0 =
-          Builder.CreateGEP(ElemTy, Ptr, HVC.getConstInt(Adjust / ElemSize));
-      return Builder.CreatePointerCast(Tmp0, ValTy->getPointerTo());
-    }
+  Type *ElemTy = cast<PointerType>(Ptr->getType())->getElementType();
+  int ElemSize = HVC.getSizeOf(ElemTy);
+  if (Adjust % ElemSize == 0) {
+    Value *Tmp0 =
+        Builder.CreateGEP(ElemTy, Ptr, HVC.getConstInt(Adjust / ElemSize));
+    return Builder.CreatePointerCast(Tmp0, ValTy->getPointerTo());
   }
 
   PointerType *CharPtrTy = Type::getInt8PtrTy(HVC.F.getContext());
@@ -475,7 +472,7 @@ auto AlignVectors::createAlignedLoad(IRBuilder<> &Builder, Type *ValTy,
     return PassThru;
   if (Mask == ConstantInt::getTrue(Mask->getType()))
     return Builder.CreateAlignedLoad(ValTy, Ptr, Align(Alignment));
-  return Builder.CreateMaskedLoad(ValTy, Ptr, Align(Alignment), Mask, PassThru);
+  return Builder.CreateMaskedLoad(Ptr, Align(Alignment), Mask, PassThru);
 }
 
 auto AlignVectors::createAlignedStore(IRBuilder<> &Builder, Value *Val,

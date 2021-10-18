@@ -165,9 +165,9 @@ tools.extend([
     'llvm-link', 'llvm-lto', 'llvm-lto2', 'llvm-mc', 'llvm-mca',
     'llvm-modextract', 'llvm-nm', 'llvm-objcopy', 'llvm-objdump', 'llvm-otool',
     'llvm-pdbutil', 'llvm-profdata', 'llvm-profgen', 'llvm-ranlib', 'llvm-rc', 'llvm-readelf',
-    'llvm-readobj', 'llvm-rtdyld', 'llvm-sim', 'llvm-size', 'llvm-split',
-    'llvm-stress', 'llvm-strings', 'llvm-strip', 'llvm-tblgen', 'llvm-tapi-diff',
-    'llvm-undname', 'llvm-windres', 'llvm-c-test', 'llvm-cxxfilt',
+    'llvm-readobj', 'llvm-rtdyld', 'llvm-sim', 'llvm-size', 'llvm-split', 'llvm-strings',
+    'llvm-strip', 'llvm-tblgen', 'llvm-tapi-diff', 'llvm-undname', 'llvm-windres',
+    'llvm-c-test', 'llvm-cxxfilt',
     'llvm-xray', 'yaml2obj', 'obj2yaml', 'yaml-bench', 'verify-uselistorder',
     'bugpoint', 'llc', 'llvm-symbolizer', 'opt', 'sancov', 'sanstats'])
 
@@ -182,13 +182,7 @@ tools.extend([
     ToolSubst('Kaleidoscope-Ch7', unresolved='ignore'),
     ToolSubst('Kaleidoscope-Ch8', unresolved='ignore'),
     ToolSubst('LLJITWithThinLTOSummaries', unresolved='ignore'),
-    ToolSubst('LLJITWithRemoteDebugging', unresolved='ignore'),
-    ToolSubst('OrcV2CBindingsBasicUsage', unresolved='ignore'),
-    ToolSubst('OrcV2CBindingsAddObjectFile', unresolved='ignore'),
-    ToolSubst('OrcV2CBindingsRemovableCode', unresolved='ignore'),
-    ToolSubst('OrcV2CBindingsReflectProcessSymbols', unresolved='ignore'),
-    ToolSubst('OrcV2CBindingsLazy', unresolved='ignore'),
-    ToolSubst('OrcV2CBindingsVeryLazy', unresolved='ignore')])
+    ToolSubst('LLJITWithRemoteDebugging', unresolved='ignore')])
 
 llvm_config.add_tool_substitutions(tools, config.llvm_tools_dir)
 
@@ -254,7 +248,7 @@ def have_cxx_shared_library():
 
     try:
         readobj_cmd = subprocess.Popen(
-            [readobj_exe, '--needed-libs', readobj_exe], stdout=subprocess.PIPE)
+            [readobj_exe, '-needed-libs', readobj_exe], stdout=subprocess.PIPE)
     except OSError:
         print('could not exec llvm-readobj')
         return False
@@ -287,6 +281,9 @@ if not 'xcore' in config.target_triple:
 # Some tests are "generic" and require a valid default triple
 if config.target_triple:
     config.available_features.add('default_triple')
+
+if lit.util.isMacOSTriple(config.target_triple):
+   config.available_features.add('darwin')
 
 import subprocess
 
@@ -356,7 +353,7 @@ llvm_config.feature_config(
     [('--assertion-mode', {'ON': 'asserts'}),
      ('--build-mode', {'[Dd][Ee][Bb][Uu][Gg]': 'debug'})])
 
-if 'darwin' == sys.platform:
+if lit.util.isMacOSTriple(config.target_triple):
     cmd = ['sysctl', 'hw.optional.fma']
     sysctl_cmd = subprocess.Popen(cmd, stdout=subprocess.PIPE)
 

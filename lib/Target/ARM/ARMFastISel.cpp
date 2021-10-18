@@ -2181,11 +2181,10 @@ unsigned ARMFastISel::getLibcallReg(const Twine &Name) {
   EVT LCREVT = TLI.getValueType(DL, GVTy);
   if (!LCREVT.isSimple()) return 0;
 
-  GlobalValue *GV = M.getNamedGlobal(Name.str());
-  if (!GV)
-    GV = new GlobalVariable(M, Type::getInt32Ty(*Context), false,
-                            GlobalValue::ExternalLinkage, nullptr, Name);
-
+  GlobalValue *GV = new GlobalVariable(M, Type::getInt32Ty(*Context), false,
+                                       GlobalValue::ExternalLinkage, nullptr,
+                                       Name);
+  assert(GV->getType() == GVTy && "We miscomputed the type for the global!");
   return ARMMaterializeGV(GV, LCREVT.getSimpleVT());
 }
 

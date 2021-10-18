@@ -4,11 +4,12 @@
 ; are not profitable.
 
 ; Test with a loop that contains memory accesses of i8 and i32 types. The
-; default maximum VF for NEON is 4. And while we don't have an instruction to
-; load 4 x i8, vectorization might still be profitable.
+; default maximum VF for NEON is 4, but vectorizing 4 x i8 is not
+; profitable. But we can extend to VF to 8 or 16, at which point the
+; i8 memory accesses become profitable.
 define void @test_load_i8_store_i32(i8* noalias %src, i32* noalias %dst, i32 %off, i64 %N) {
 ; CHECK-LABEL: @test_load_i8_store_i32(
-; CHECK:       <4 x i8>
+; CHECK-NOT: x i8>
 ;
 entry:
   br label %loop

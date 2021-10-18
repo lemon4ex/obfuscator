@@ -1934,23 +1934,25 @@ TemplateInstantiator::TransformExprRequirement(concepts::ExprRequirement *Req) {
     return Req;
 
   Sema::SFINAETrap Trap(SemaRef);
+  TemplateDeductionInfo Info(Req->getExpr()->getBeginLoc());
 
   llvm::PointerUnion<Expr *, concepts::Requirement::SubstitutionDiagnostic *>
       TransExpr;
   if (Req->isExprSubstitutionFailure())
     TransExpr = Req->getExprSubstitutionDiagnostic();
   else {
-    Expr *E = Req->getExpr();
-    TemplateDeductionInfo Info(E->getBeginLoc());
-    Sema::InstantiatingTemplate ExprInst(SemaRef, E->getBeginLoc(), Req, Info,
-                                         E->getSourceRange());
+    Sema::InstantiatingTemplate ExprInst(SemaRef, Req->getExpr()->getBeginLoc(),
+                                         Req, Info,
+                                         Req->getExpr()->getSourceRange());
     if (ExprInst.isInvalid())
       return nullptr;
-    ExprResult TransExprRes = TransformExpr(E);
+    ExprResult TransExprRes = TransformExpr(Req->getExpr());
     if (TransExprRes.isInvalid() || Trap.hasErrorOccurred())
-      TransExpr = createSubstDiag(SemaRef, Info, [&](llvm::raw_ostream &OS) {
-        E->printPretty(OS, nullptr, SemaRef.getPrintingPolicy());
-      });
+      TransExpr = createSubstDiag(SemaRef, Info,
+          [&] (llvm::raw_ostream& OS) {
+              Req->getExpr()->printPretty(OS, nullptr,
+                                          SemaRef.getPrintingPolicy());
+          });
     else
       TransExpr = TransExprRes.get();
   }
@@ -1964,7 +1966,6 @@ TemplateInstantiator::TransformExprRequirement(concepts::ExprRequirement *Req) {
   else if (RetReq.isTypeConstraint()) {
     TemplateParameterList *OrigTPL =
         RetReq.getTypeConstraintTemplateParameterList();
-    TemplateDeductionInfo Info(OrigTPL->getTemplateLoc());
     Sema::InstantiatingTemplate TPLInst(SemaRef, OrigTPL->getTemplateLoc(),
                                         Req, Info, OrigTPL->getSourceRange());
     if (TPLInst.isInvalid())

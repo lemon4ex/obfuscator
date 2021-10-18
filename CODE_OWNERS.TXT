@@ -58,6 +58,14 @@ N: Greg Clayton
 E: clayborg@gmail.com
 D: LLDB
 
+N: Pete Couperus
+E: petecoup@synopsys.com
+D: ARC backend (lib/Target/ARC/*)
+
+N: Philip Reames
+E: listmail@philipreames.com
+D: IndVar Simplify, Scalar Evolution
+
 N: Marshall Clow
 E: mclow.lists@gmail.com
 D: libc++
@@ -181,10 +189,6 @@ N: Jacques Pienaar
 E: jpienaar@google.com
 D: Lanai Backend
 
-N: Philip Reames
-E: listmail@philipreames.com
-D: IndVar Simplify, Scalar Evolution
-
 N: Paul Robinson
 E: paul_robinson@playstation.sony.com
 D: Sony PlayStation®4 support
@@ -196,10 +200,6 @@ D: Fast-Isel
 N: Duncan Sands
 E: baldrick@free.fr
 D: DragonEgg
-
-N: Mark Schimmel
-E: marksl@synopsys.com
-D: ARC backend (lib/Target/ARC/*)
 
 N: Kostya Serebryany
 E: kcc@google.com
@@ -244,7 +244,3 @@ D: MinGW
 N: Zi Xuan Wu (Zeson)
 E: zixuan.wu@linux.alibaba.com
 D: C-SKY backend (lib/Target/CSKY/*)
-
-N: Obfuscator-LLVM team
-E: dev@o-llvm.org
-D: Obfuscator

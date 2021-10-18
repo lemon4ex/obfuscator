@@ -99,11 +99,12 @@ struct StoreToLoadForwardingCandidate {
                                  Loop *L) const {
     Value *LoadPtr = Load->getPointerOperand();
     Value *StorePtr = Store->getPointerOperand();
-    Type *LoadType = getLoadStoreType(Load);
+    Type *LoadPtrType = LoadPtr->getType();
+    Type *LoadType = LoadPtrType->getPointerElementType();
 
-    assert(LoadPtr->getType()->getPointerAddressSpace() ==
+    assert(LoadPtrType->getPointerAddressSpace() ==
                StorePtr->getType()->getPointerAddressSpace() &&
-           LoadType == getLoadStoreType(Store) &&
+           LoadType == StorePtr->getType()->getPointerElementType() &&
            "Should be a known dependence");
 
     // Currently we only support accesses with unit stride.  FIXME: we should be

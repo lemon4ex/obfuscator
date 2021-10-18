@@ -33,10 +33,9 @@ using namespace llvm::object;
 using namespace llvm::support;
 
 namespace opts {
-cl::OptionCategory CXXDumpCategory("CXX Dump Options");
 cl::list<std::string> InputFilenames(cl::Positional,
                                      cl::desc("<input object files>"),
-                                     cl::ZeroOrMore, cl::cat(CXXDumpCategory));
+                                     cl::ZeroOrMore);
 } // namespace opts
 
 namespace llvm {
@@ -550,7 +549,6 @@ int main(int argc, const char *argv[]) {
   // Register the target printer for --version.
   cl::AddExtraVersionPrinter(TargetRegistry::printRegisteredTargetsForVersion);
 
-  cl::HideUnrelatedOptions({&opts::CXXDumpCategory, &getColorCategory()});
   cl::ParseCommandLineOptions(argc, argv, "LLVM C++ ABI Data Dumper\n");
 
   // Default to stdin if no filename is specified.

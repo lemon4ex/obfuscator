@@ -20,7 +20,7 @@ if(NOT DEFINED LLVM_VERSION_PATCH)
   set(LLVM_VERSION_PATCH 0)
 endif()
 if(NOT DEFINED LLVM_VERSION_SUFFIX)
-  set(LLVM_VERSION_SUFFIX)
+  set(LLVM_VERSION_SUFFIX git)
 endif()
 
 if (NOT PACKAGE_VERSION)
@@ -64,7 +64,7 @@ endif()
 # LLVM_EXTERNAL_${project}_SOURCE_DIR using LLVM_ALL_PROJECTS
 # This allows an easy way of setting up a build directory for llvm and another
 # one for llvm+clang+... using the same sources.
-set(LLVM_ALL_PROJECTS "clang;clang-tools-extra;compiler-rt;cross-project-tests;libc;libclc;libcxx;libcxxabi;libunwind;lld;lldb;mlir;openmp;parallel-libs;polly;pstl")
+set(LLVM_ALL_PROJECTS "clang;clang-tools-extra;compiler-rt;debuginfo-tests;libc;libclc;libcxx;libcxxabi;libunwind;lld;lldb;mlir;openmp;parallel-libs;polly;pstl")
 # The flang project is not yet part of "all" projects (see C++ requirements)
 set(LLVM_EXTRA_PROJECTS "flang")
 # List of all known projects in the mono repo
@@ -221,9 +221,9 @@ include(VersionFromVCS)
 option(LLVM_APPEND_VC_REV
   "Embed the version control system revision in LLVM" ON)
 
-set(PACKAGE_NAME Obfuscator-LLVM)
+set(PACKAGE_NAME LLVM)
 set(PACKAGE_STRING "${PACKAGE_NAME} ${PACKAGE_VERSION}")
-set(PACKAGE_BUGREPORT "http://o-llvm.org")
+set(PACKAGE_BUGREPORT "https://bugs.llvm.org/")
 
 set(BUG_REPORT_URL "${PACKAGE_BUGREPORT}" CACHE STRING
   "Default URL where bug reports are to be submitted.")
@@ -702,13 +702,8 @@ else()
 endif()
 option(LLVM_ENABLE_PLUGINS "Enable plugin support" ${LLVM_ENABLE_PLUGINS_default})
 
-set(LLVM_ENABLE_NEW_PASS_MANAGER TRUE CACHE BOOL
+set(ENABLE_EXPERIMENTAL_NEW_PASS_MANAGER TRUE CACHE BOOL
   "Enable the new pass manager by default.")
-if(NOT LLVM_ENABLE_NEW_PASS_MANAGER)
-  message(WARNING "Using the legacy pass manager for the optimization pipeline"
-                  " is deprecated. The functionality will degrade over time and"
-                  " be removed in a future release.")
-endif()
 
 include(HandleLLVMOptions)
 
@@ -793,28 +788,8 @@ endif()
 set(TENSORFLOW_C_LIB_PATH "" CACHE PATH "Path to TensorFlow C library install")
 if (TENSORFLOW_C_LIB_PATH)
   find_library(tensorflow_c_api tensorflow PATHS ${TENSORFLOW_C_LIB_PATH}/lib NO_DEFAULT_PATH REQUIRED)
-  # Currently, the protobuf headers are distributed with the pip package that corresponds to the version
-  # of the C API library.
-  find_library(tensorflow_fx tensorflow_framework PATHS ${TENSORFLOW_C_LIB_PATH}/lib NO_DEFAULT_PATH REQUIRED)
   set(LLVM_HAVE_TF_API "ON" CACHE BOOL "Full Tensorflow API available")
   include_directories(${TENSORFLOW_C_LIB_PATH}/include)
-  if (NOT TF_PROTO_HEADERS)
-    message(STATUS "TF_PROTO_HEADERS not defined. Looking for tensorflow pip package.")
-    execute_process(COMMAND 
-      ${Python3_EXECUTABLE} "-m" "pip" "show" "tensorflow" 
-      OUTPUT_VARIABLE TF_PIP_OUT)
-    if ("${TF_PIP_OUT}" STREQUAL "")
-      message(FATAL ERROR "Tensorflow pip package is also required for 'development' mode (protobuf headers)")
-    endif()
-    string(REGEX MATCH "Location: ([^\n]*\n)" TF_PIP_LOC "${TF_PIP_OUT}")
-    string(REPLACE "Location: " "" TF_PIP ${TF_PIP_LOC})
-    string(STRIP ${TF_PIP} TF_PIP)
-    set(TF_PROTO_HEADERS "${TF_PIP}/tensorflow/include")
-  endif()
-  message(STATUS "Using Tensorflow headers under: ${TF_PROTO_HEADERS}")
-  include_directories(${TF_PROTO_HEADERS})
-  add_definitions("-DGOOGLE_PROTOBUF_NO_RTTI")
-  add_definitions("-D_GLIBCXX_USE_CXX11_ABI=0")
 endif()
 
 # For up-to-date instructions for installing the Tensorflow dependency, refer to
@@ -837,6 +812,10 @@ if (NOT TENSORFLOW_AOT_PATH STREQUAL "")
     ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX} COMPONENT tf_xla_runtime)
   set_property(GLOBAL APPEND PROPERTY LLVM_EXPORTS tf_xla_runtime)
 endif()
+
+# Keep the legacy CMake flag ENABLE_EXPERIMENTAL_NEW_PASS_MANAGER for
+# compatibility.
+set(LLVM_ENABLE_NEW_PASS_MANAGER ${ENABLE_EXPERIMENTAL_NEW_PASS_MANAGER})
 
 # Configure the three LLVM configuration header files.
 configure_file(

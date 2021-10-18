@@ -97,7 +97,7 @@ private:
   void parsePPEndIf();
   void parsePPUnknown();
   void readTokenWithJavaScriptASI();
-  void parseStructuralElement(bool IsTopLevel = false);
+  void parseStructuralElement();
   bool tryToParseBracedList();
   bool parseBracedList(bool ContinueOnSemicolons = false, bool IsEnum = false,
                        tok::TokenKind ClosingBraceKind = tok::r_brace);

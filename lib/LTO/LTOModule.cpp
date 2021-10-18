@@ -545,8 +545,7 @@ void LTOModule::addPotentialUndefinedSymbol(ModuleSymbolTable::Symbol Sym,
     name.c_str();
   }
 
-  auto IterBool =
-      _undefines.insert(std::make_pair(name.str(), NameAndAttributes()));
+  auto IterBool = _undefines.insert(std::make_pair(name, NameAndAttributes()));
 
   // we already have the symbol
   if (!IterBool.second)
@@ -583,7 +582,7 @@ void LTOModule::parseSymbols() {
         SymTab.printSymbolName(OS, Sym);
         Buffer.c_str();
       }
-      StringRef Name = Buffer;
+      StringRef Name(Buffer);
 
       if (IsUndefined)
         addAsmGlobalSymbolUndef(Name);

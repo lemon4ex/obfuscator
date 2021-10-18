@@ -26,7 +26,6 @@
 ; RUN:     --check-prefix=CHECK-O3 --check-prefix=CHECK-EP-Peephole
 
 ; CHECK-O: Running pass: Annotation2Metadata
-; CHECK-O-NEXT: Running pass: CrossDSOCFIPass
 ; CHECK-O-NEXT: Running pass: GlobalDCEPass
 ; CHECK-O-NEXT: Running pass: ForceFunctionAttrsPass
 ; CHECK-O-NEXT: Running pass: InferFunctionAttrsPass
@@ -73,7 +72,6 @@
 ; CHECK-O23SZ-NEXT: Running pass: InlinerPass
 ; CHECK-O23SZ-NEXT: Running pass: GlobalOptPass
 ; CHECK-O23SZ-NEXT: Running pass: GlobalDCEPass
-; CHECK-O23SZ-NEXT: Running pass: ArgumentPromotionPass
 ; CHECK-O23SZ-NEXT: Running pass: InstCombinePass
 ; CHECK-EP-Peephole-NEXT: Running pass: NoOpFunctionPass
 ; CHECK-O23SZ-NEXT: Running pass: JumpThreadingPass
@@ -125,6 +123,7 @@
 ; CHECK-O23SZ-NEXT: Running pass: InstCombinePass on foo
 ; CHECK-EP-Peephole-NEXT: Running pass: NoOpFunctionPass on foo
 ; CHECK-O23SZ-NEXT: Running pass: JumpThreadingPass on foo
+; CHECK-O23SZ-NEXT: Running pass: CrossDSOCFIPass
 ; CHECK-O23SZ-NEXT: Running pass: LowerTypeTestsPass
 ; CHECK-O-NEXT: Running pass: LowerTypeTestsPass
 ; CHECK-O23SZ-NEXT: Running pass: SimplifyCFGPass

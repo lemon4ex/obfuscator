@@ -52,7 +52,6 @@ FunctionPass *createPPCCTRLoops();
   FunctionPass *createPPCBoolRetToIntPass();
   FunctionPass *createPPCExpandISELPass();
   FunctionPass *createPPCPreEmitPeepholePass();
-  FunctionPass *createPPCExpandAtomicPseudoPass();
   void LowerPPCMachineInstrToMCInst(const MachineInstr *MI, MCInst &OutMI,
                                     AsmPrinter &AP);
   bool LowerPPCMachineOperandToMCOperand(const MachineOperand &MO,
@@ -76,7 +75,6 @@ FunctionPass *createPPCCTRLoops();
   void initializePPCPreEmitPeepholePass(PassRegistry &);
   void initializePPCTLSDynamicCallPass(PassRegistry &);
   void initializePPCMIPeepholePass(PassRegistry&);
-  void initializePPCExpandAtomicPseudoPass(PassRegistry &);
 
   extern char &PPCVSXFMAMutateID;
 

@@ -87,7 +87,7 @@ public:
   TargetStackID::Value getStackIDForScalableVectors() const override;
 
   void processFunctionBeforeFrameFinalized(MachineFunction &MF,
-                                           RegScavenger *RS) const override;
+                                             RegScavenger *RS) const override;
 
   void
   processFunctionBeforeFrameIndicesReplaced(MachineFunction &MF,
@@ -144,11 +144,15 @@ private:
   int64_t assignSVEStackObjectOffsets(MachineFrameInfo &MF,
                                       int &MinCSFrameIndex,
                                       int &MaxCSFrameIndex) const;
+
+  bool shouldAuthenticateLR(const MachineFunction &MF) const;
+
   MCCFIInstruction
   createDefCFAExpressionFromSP(const TargetRegisterInfo &TRI,
                                const StackOffset &OffsetFromSP) const;
   MCCFIInstruction createCfaOffset(const TargetRegisterInfo &MRI, unsigned DwarfReg,
                                    const StackOffset &OffsetFromDefCFA) const;
+
   bool shouldCombineCSRLocalStackBumpInEpilogue(MachineBasicBlock &MBB,
                                                 unsigned StackBumpBytes) const;
 };

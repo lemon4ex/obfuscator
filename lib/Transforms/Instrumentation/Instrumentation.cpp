@@ -83,7 +83,7 @@ Comdat *llvm::getOrCreateFunctionComdat(Function &F, Triple &T) {
   // symbols.
   Comdat *C = M->getOrInsertComdat(F.getName());
   if (T.isOSBinFormatELF() || (T.isOSBinFormatCOFF() && !F.isWeakForLinker()))
-    C->setSelectionKind(Comdat::NoDeduplicate);
+    C->setSelectionKind(Comdat::NoDuplicates);
   F.setComdat(C);
   return C;
 }
@@ -110,6 +110,7 @@ void llvm::initializeInstrumentation(PassRegistry &Registry) {
   initializeThreadSanitizerLegacyPassPass(Registry);
   initializeModuleSanitizerCoverageLegacyPassPass(Registry);
   initializeDataFlowSanitizerLegacyPassPass(Registry);
+  initializeSoftPointerAuthLegacyPassPass(Registry);
 }
 
 /// LLVMInitializeInstrumentation - C binding for

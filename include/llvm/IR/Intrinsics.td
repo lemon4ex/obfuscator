@@ -216,7 +216,7 @@ class LLVMVectorOfAnyPointersToElt<int num> : LLVMMatchType<num>;
 class LLVMVectorElementType<int num> : LLVMMatchType<num>;
 
 // Match the type of another intrinsic parameter that is expected to be a
-// vector type, but change the element count to be half as many.
+// vector type, but change the element count to be half as many
 class LLVMHalfElementsVectorType<int num> : LLVMMatchType<num>;
 
 // Match the type of another intrinsic parameter that is expected to be a
@@ -364,7 +364,7 @@ class Intrinsic<list<LLVMType> ret_types,
   bit isTarget = false;
 }
 
-// Intrinsic with default attributes (disable_default_attributes = false).
+// Intrinisic with default attributes (disable_default_attributes = false).
 class DefaultAttrsIntrinsic<list<LLVMType> ret_types,
                 list<LLVMType> param_types = [],
                 list<IntrinsicProperty> intr_properties = [],
@@ -1335,9 +1335,6 @@ def int_sideeffect : DefaultAttrsIntrinsic<[], [], [IntrInaccessibleMemOnly, Int
 def int_pseudoprobe : Intrinsic<[], [llvm_i64_ty, llvm_i64_ty, llvm_i32_ty, llvm_i64_ty],
                                     [IntrInaccessibleMemOnly, IntrWillReturn]>;
 
-// Arithmetic fence intrinsic.
-def int_arithmetic_fence : Intrinsic<[llvm_anyfloat_ty], [LLVMMatchType<0>], [IntrNoMem]>;
-
 // Intrinsics to support half precision floating point format
 let IntrProperties = [IntrNoMem, IntrWillReturn] in {
 def int_convert_to_fp16   : DefaultAttrsIntrinsic<[llvm_i16_ty], [llvm_anyfloat_ty]>;
@@ -1368,32 +1365,6 @@ def int_experimental_stepvector : DefaultAttrsIntrinsic<[llvm_anyvector_ty],
                                                         [], [IntrNoMem]>;
 
 //===---------------- Vector Predication Intrinsics --------------===//
-// Memory Intrinsics
-def int_vp_store : DefaultAttrsIntrinsic<[],
-                             [ llvm_anyvector_ty,
-                               LLVMAnyPointerType<LLVMMatchType<0>>,
-                               LLVMScalarOrSameVectorWidth<0, llvm_i1_ty>,
-                               llvm_i32_ty],
-                             [ NoCapture<ArgIndex<1>>, IntrNoSync, IntrWriteMem, IntrArgMemOnly, IntrWillReturn ]>;
-
-def int_vp_load  : DefaultAttrsIntrinsic<[ llvm_anyvector_ty],
-                             [ LLVMAnyPointerType<LLVMMatchType<0>>,
-                               LLVMScalarOrSameVectorWidth<0, llvm_i1_ty>,
-                               llvm_i32_ty],
-                             [ NoCapture<ArgIndex<0>>, IntrNoSync, IntrReadMem, IntrWillReturn, IntrArgMemOnly ]>;
-
-def int_vp_gather: DefaultAttrsIntrinsic<[ llvm_anyvector_ty],
-                             [ LLVMVectorOfAnyPointersToElt<0>,
-                               LLVMScalarOrSameVectorWidth<0, llvm_i1_ty>,
-                               llvm_i32_ty],
-                             [ IntrReadMem, IntrNoSync, IntrWillReturn, IntrArgMemOnly ]>;
-
-def int_vp_scatter: DefaultAttrsIntrinsic<[],
-                              [ llvm_anyvector_ty,
-                                LLVMVectorOfAnyPointersToElt<0>,
-                                LLVMScalarOrSameVectorWidth<0, llvm_i1_ty>,
-                                llvm_i32_ty],
-                              [ IntrArgMemOnly, IntrNoSync, IntrWillReturn ]>; // TODO allow IntrNoCapture for vectors of pointers
 
 // Speculatable Binary operators
 let IntrProperties = [IntrSpeculatable, IntrNoMem, IntrNoSync, IntrWillReturn] in {
@@ -1735,6 +1706,59 @@ def int_preserve_struct_access_index : DefaultAttrsIntrinsic<[llvm_anyptr_ty],
                                                  [IntrNoMem,
                                                   ImmArg<ArgIndex<1>>,
                                                   ImmArg<ArgIndex<2>>]>;
+
+//===----------------- Pointer Authentication Intrinsics ------------------===//
+//
+
+// Sign an unauthenticated pointer (with a raw address as its value), using
+// the specified key and discriminator.
+// Returns the first operand, with a signature embedded instead of known bits.
+def int_ptrauth_sign : Intrinsic<[llvm_anyint_ty],
+                                 [LLVMMatchType<0>, llvm_i32_ty,
+                                  LLVMMatchType<0>],
+                                 [IntrNoMem,ImmArg<ArgIndex<1>>]>;
+
+// Authenticate a signed pointer, using the specified key and discriminator.
+// Returns the first operand, with the signature bits removed.
+// If the signature isn't valid, this returns an invalid, poisoned pointer.
+def int_ptrauth_auth : Intrinsic<[llvm_anyint_ty],
+                                 [LLVMMatchType<0>, llvm_i32_ty,
+                                  LLVMMatchType<0>],
+                                 [IntrNoMem,ImmArg<ArgIndex<1>>]>;
+
+// Authenticate a signed pointer (using the first set of key/discriminator),
+// and resign it (using the second).
+// This is a combined form of @llvm.ptrauth.sign and @llvm.ptrauth.auth, with
+// an additional integrity guarantee on the intermediate value.
+def int_ptrauth_resign : Intrinsic<[llvm_anyint_ty],
+                                   [LLVMMatchType<0>, llvm_i32_ty,
+                                    LLVMMatchType<0>, llvm_i32_ty,
+                                    LLVMMatchType<0>],
+                                   [IntrNoMem,ImmArg<ArgIndex<1>>,
+                                    ImmArg<ArgIndex<3>>]>;
+
+// Strip the embedded signature out of a signed pointer.
+// This behaves like @llvm.ptrauth.auth, but doesn't check for the validity of
+// the embedded signature.
+def int_ptrauth_strip : Intrinsic<[llvm_anyint_ty],
+                                  [LLVMMatchType<0>, llvm_i32_ty],
+                                  [IntrNoMem,ImmArg<ArgIndex<1>>]>;
+
+// Blend a small integer discriminator with an address discriminator, producing
+// a new discriminator value.
+def int_ptrauth_blend : Intrinsic<[llvm_anyint_ty],
+                                  [LLVMMatchType<0>, LLVMMatchType<0>],
+                                  [IntrNoMem]>;
+
+// Compute the signature of a value, using a given discriminator.
+// This differs from @llvm.ptrauth.sign in that it doesn't embed the computed
+// signature in the pointer, but instead returns it as a standalone value.
+// That allows it to be used to sign non-pointer data: in that sense, it is
+// generic.  There is no generic @llvm.ptrauth.auth: instead, the signature
+// can be computed using @llvm.ptrauth.sign_generic, and compared separately.
+def int_ptrauth_sign_generic : Intrinsic<[llvm_anyint_ty],
+                                         [LLVMMatchType<0>, LLVMMatchType<0>],
+                                         [IntrNoMem]>;
 
 //===------------ Intrinsics to perform common vector shuffles ------------===//
 

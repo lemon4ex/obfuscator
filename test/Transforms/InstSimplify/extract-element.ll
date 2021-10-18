@@ -62,7 +62,10 @@ define float @extract_element_splat_constant_vector_variable_index(i32 %y) {
 
 define i32 @extractelement_splat_variable_index(i32 %v, i32 %index) {
 ; CHECK-LABEL: @extractelement_splat_variable_index(
-; CHECK-NEXT:    ret i32 [[V:%.*]]
+; CHECK-NEXT:    [[IN:%.*]] = insertelement <3 x i32> poison, i32 [[V:%.*]], i32 0
+; CHECK-NEXT:    [[SPLAT:%.*]] = shufflevector <3 x i32> [[IN]], <3 x i32> poison, <3 x i32> zeroinitializer
+; CHECK-NEXT:    [[R:%.*]] = extractelement <3 x i32> [[SPLAT]], i32 [[INDEX:%.*]]
+; CHECK-NEXT:    ret i32 [[R]]
 ;
   %in = insertelement <3 x i32> poison, i32 %v, i32 0
   %splat = shufflevector <3 x i32> %in, <3 x i32> poison, <3 x i32> zeroinitializer

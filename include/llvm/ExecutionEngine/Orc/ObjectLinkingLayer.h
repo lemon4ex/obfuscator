@@ -27,6 +27,7 @@
 #include <functional>
 #include <list>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -63,9 +64,8 @@ public:
   /// configured.
   class Plugin {
   public:
-    using JITLinkSymbolSet = DenseSet<jitlink::Symbol *>;
-    using SyntheticSymbolDependenciesMap =
-        DenseMap<SymbolStringPtr, JITLinkSymbolSet>;
+    using JITLinkSymbolVector = std::vector<const jitlink::Symbol *>;
+    using LocalDependenciesMap = DenseMap<SymbolStringPtr, JITLinkSymbolVector>;
 
     virtual ~Plugin();
     virtual void modifyPassConfig(MaterializationResponsibility &MR,
@@ -89,23 +89,19 @@ public:
                                              ResourceKey SrcKey) = 0;
 
     /// Return any dependencies that synthetic symbols (e.g. init symbols)
-    /// have on symbols in the LinkGraph.
-    /// This is used by the ObjectLinkingLayer to update the dependencies for
-    /// the synthetic symbols.
-    virtual SyntheticSymbolDependenciesMap
-    getSyntheticSymbolDependencies(MaterializationResponsibility &MR) {
-      return SyntheticSymbolDependenciesMap();
+    /// have on locally scoped jitlink::Symbols. This is used by the
+    /// ObjectLinkingLayer to update the dependencies for the synthetic
+    /// symbols.
+    virtual LocalDependenciesMap
+    getSyntheticSymbolLocalDependencies(MaterializationResponsibility &MR) {
+      return LocalDependenciesMap();
     }
   };
 
   using ReturnObjectBufferFunction =
       std::function<void(std::unique_ptr<MemoryBuffer>)>;
 
-  /// Construct an ObjectLinkingLayer using the ExecutorProcessControl
-  /// instance's memory manager.
-  ObjectLinkingLayer(ExecutionSession &ES);
-
-  /// Construct an ObjectLinkingLayer using a custom memory manager.
+  /// Construct an ObjectLinkingLayer.
   ObjectLinkingLayer(ExecutionSession &ES,
                      jitlink::JITLinkMemoryManager &MemMgr);
 

@@ -38,7 +38,6 @@ set(files
   avxvnniintrin.h
   bmi2intrin.h
   bmiintrin.h
-  builtins.h
   __clang_cuda_builtin_vars.h
   __clang_cuda_math.h
   __clang_cuda_cmath.h
@@ -67,10 +66,6 @@ set(files
   fmaintrin.h
   fxsrintrin.h
   gfniintrin.h
-  hexagon_circ_brev_intrinsics.h
-  hexagon_protos.h
-  hexagon_types.h
-  hvx_hexagon_protos.h
   hresetintrin.h
   htmintrin.h
   htmxlintrin.h
@@ -99,6 +94,7 @@ set(files
   pconfigintrin.h
   popcntintrin.h
   prfchwintrin.h
+  ptrauth.h
   ptwriteintrin.h
   rdseedintrin.h
   rtmintrin.h

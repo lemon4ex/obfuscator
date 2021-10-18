@@ -251,10 +251,7 @@ Error MachOLayoutBuilder::layoutTail(uint64_t Offset) {
   uint64_t StartOfFunctionStarts = StartOfExportTrie + O.Exports.Trie.size();
   uint64_t StartOfDataInCode =
       StartOfFunctionStarts + O.FunctionStarts.Data.size();
-  uint64_t StartOfLinkerOptimizationHint =
-      StartOfDataInCode + O.DataInCode.Data.size();
-  uint64_t StartOfSymbols =
-      StartOfLinkerOptimizationHint + O.LinkerOptimizationHint.Data.size();
+  uint64_t StartOfSymbols = StartOfDataInCode + O.DataInCode.Data.size();
   uint64_t StartOfIndirectSymbols =
       StartOfSymbols + NListSize * O.SymTable.Symbols.size();
   uint64_t StartOfSymbolStrings =
@@ -323,11 +320,6 @@ Error MachOLayoutBuilder::layoutTail(uint64_t Offset) {
       MLC.linkedit_data_command_data.dataoff = StartOfDataInCode;
       MLC.linkedit_data_command_data.datasize = O.DataInCode.Data.size();
       break;
-    case MachO::LC_LINKER_OPTIMIZATION_HINT:
-      MLC.linkedit_data_command_data.dataoff = StartOfLinkerOptimizationHint;
-      MLC.linkedit_data_command_data.datasize =
-          O.LinkerOptimizationHint.Data.size();
-      break;
     case MachO::LC_FUNCTION_STARTS:
       MLC.linkedit_data_command_data.dataoff = StartOfFunctionStarts;
       MLC.linkedit_data_command_data.datasize = O.FunctionStarts.Data.size();
@@ -363,6 +355,7 @@ Error MachOLayoutBuilder::layoutTail(uint64_t Offset) {
     // LC_ENCRYPT_INFO/LC_ENCRYPTION_INFO_64 need to be adjusted.
     case MachO::LC_ENCRYPTION_INFO:
     case MachO::LC_ENCRYPTION_INFO_64:
+    case MachO::LC_LINKER_OPTIMIZATION_HINT:
     case MachO::LC_LOAD_DYLINKER:
     case MachO::LC_MAIN:
     case MachO::LC_RPATH:

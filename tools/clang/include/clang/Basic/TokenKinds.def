@@ -329,7 +329,7 @@ KEYWORD(_Thread_local               , KEYALL)
 KEYWORD(__func__                    , KEYALL)
 KEYWORD(__objc_yes                  , KEYALL)
 KEYWORD(__objc_no                   , KEYALL)
-
+KEYWORD(__ptrauth                   , KEYALL)
 
 // C++ 2.11p1: Keywords.
 KEYWORD(asm                         , KEYCXX|KEYGNU)
@@ -549,6 +549,8 @@ ALIAS("__is_same_as", __is_same, KEYCXX)
 // Apple Extension.
 KEYWORD(__private_extern__          , KEYALL)
 KEYWORD(__module_private__          , KEYALL)
+
+UNARY_EXPR_OR_TYPE_TRAIT(__builtin_ptrauth_type_discriminator, PtrAuthTypeDiscriminator, KEYALL)
 
 // Extension that will be enabled for Microsoft, Borland and PS4, but can be
 // disabled via '-fno-declspec'.
@@ -863,13 +865,6 @@ PRAGMA_ANNOTATION(pragma_ms_pragma)
 PRAGMA_ANNOTATION(pragma_opencl_extension)
 
 // Annotations for OpenMP pragma directives - #pragma omp ...
-// The parser produces this annotation token when it parses an [[omp::*]]
-// attribute. The tokens from the attribute argument list are replayed to the
-// token stream with this leading token (and a trailing pragma_openmp_end) so
-// that the parser can reuse the OpenMP parsing logic but still be able to
-// distinguish between a real pragma and a converted pragma. It is not marked
-// as a PRAGMA_ANNOTATION because it doesn't get generated from a #pragma.
-ANNOTATION(attr_openmp)
 // The lexer produces these so that they only take effect when the parser
 // handles #pragma omp ... directives.
 PRAGMA_ANNOTATION(pragma_openmp)

@@ -9,6 +9,7 @@
 #ifndef LLVM_CLANG_FRONTEND_COMPILERINVOCATION_H
 #define LLVM_CLANG_FRONTEND_COMPILERINVOCATION_H
 
+#include "clang/APINotes/APINotesOptions.h"
 #include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/DiagnosticOptions.h"
 #include "clang/Basic/FileSystemOptions.h"
@@ -132,6 +133,9 @@ class CompilerInvocationValueBase {
 protected:
   MigratorOptions MigratorOpts;
 
+  /// Options controlling API notes.
+  APINotesOptions APINotesOpts;
+
   /// Options controlling IRgen and the backend.
   CodeGenOptions CodeGenOpts;
 
@@ -150,6 +154,9 @@ protected:
 public:
   MigratorOptions &getMigratorOpts() { return MigratorOpts; }
   const MigratorOptions &getMigratorOpts() const { return MigratorOpts; }
+
+  APINotesOptions &getAPINotesOpts() { return APINotesOpts; }
+  const APINotesOptions &getAPINotesOpts() const { return APINotesOpts; }
 
   CodeGenOptions &getCodeGenOpts() { return CodeGenOpts; }
   const CodeGenOptions &getCodeGenOpts() const { return CodeGenOpts; }
@@ -229,7 +236,7 @@ public:
 
   /// Retrieve a module hash string that is suitable for uniquely
   /// identifying the conditions under which the module was built.
-  std::string getModuleHash() const;
+  std::string getModuleHash(DiagnosticsEngine &Diags) const;
 
   using StringAllocator = llvm::function_ref<const char *(const llvm::Twine &)>;
   /// Generate a cc1-compatible command line arguments from this instance.

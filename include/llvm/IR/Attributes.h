@@ -71,28 +71,13 @@ public:
   enum AttrKind {
     // IR-Level Attributes
     None,                  ///< No attributes have been set
-    #define GET_ATTR_ENUM
+    #define GET_ATTR_NAMES
+    #define ATTRIBUTE_ENUM(ENUM_NAME, OTHER) ENUM_NAME,
     #include "llvm/IR/Attributes.inc"
     EndAttrKinds,          ///< Sentinal value useful for loops
     EmptyKey,              ///< Use as Empty key for DenseMap of AttrKind
     TombstoneKey,          ///< Use as Tombstone key for DenseMap of AttrKind
   };
-
-  static const unsigned NumTypeAttrKinds = LastTypeAttr - FirstTypeAttr + 1;
-
-  static bool isEnumAttrKind(AttrKind Kind) {
-    return Kind >= FirstEnumAttr && Kind <= LastEnumAttr;
-  }
-  static bool isIntAttrKind(AttrKind Kind) {
-    return Kind >= FirstIntAttr && Kind <= LastIntAttr;
-  }
-  static bool isTypeAttrKind(AttrKind Kind) {
-    return Kind >= FirstTypeAttr && Kind <= LastTypeAttr;
-  }
-
-  static bool canUseAsFnAttr(AttrKind Kind);
-  static bool canUseAsParamAttr(AttrKind Kind);
-  static bool canUseAsRetAttr(AttrKind Kind);
 
 private:
   AttributeImpl *pImpl = nullptr;
@@ -141,6 +126,9 @@ public:
   static Attribute::AttrKind getAttrKindFromName(StringRef AttrName);
 
   static StringRef getNameFromAttrKind(Attribute::AttrKind AttrKind);
+
+  /// Return true if and only if the attribute has an Argument.
+  static bool doesAttrKindHaveArgument(Attribute::AttrKind AttrKind);
 
   /// Return true if the provided string matches the IR name of an attribute.
   /// example: "noalias" return true but not "NoAlias"
@@ -346,7 +334,6 @@ public:
   Type *getByRefType() const;
   Type *getPreallocatedType() const;
   Type *getInAllocaType() const;
-  Type *getElementType() const;
   std::pair<unsigned, Optional<unsigned>> getAllocSizeArgs() const;
   std::pair<unsigned, unsigned> getVScaleRangeArgs() const;
   std::string getAsString(bool InAttrGrp = false) const;
@@ -546,6 +533,12 @@ public:
     return removeAttributes(C, ArgNo + FirstArgIndex, AttrsToRemove);
   }
 
+  /// Remove noundef attribute and other attributes that imply undefined
+  /// behavior if a `undef` or `poison` value is passed from this attribute
+  /// list. Returns a new list because attribute lists are immutable.
+  LLVM_NODISCARD AttributeList
+  removeParamUndefImplyingAttributes(LLVMContext &C, unsigned ArgNo) const;
+
   /// Remove all attributes at the specified arg index from this
   /// attribute list. Returns a new list because attribute lists are immutable.
   LLVM_NODISCARD AttributeList removeParamAttributes(LLVMContext &C,
@@ -709,9 +702,6 @@ public:
   /// Return the inalloca type for the specified function parameter.
   Type *getParamInAllocaType(unsigned ArgNo) const;
 
-  /// Return the elementtype type for the specified function parameter.
-  Type *getParamElementType(unsigned ArgNo) const;
-
   /// Get the stack alignment.
   MaybeAlign getStackAlignment(unsigned Index) const;
 
@@ -820,9 +810,11 @@ class AttrBuilder {
   uint64_t DerefOrNullBytes = 0;
   uint64_t AllocSizeArgs = 0;
   uint64_t VScaleRangeArgs = 0;
-  std::array<Type *, Attribute::NumTypeAttrKinds> TypeAttrs = {};
-
-  Optional<unsigned> kindToTypeIndex(Attribute::AttrKind Kind) const;
+  Type *ByValType = nullptr;
+  Type *StructRetType = nullptr;
+  Type *ByRefType = nullptr;
+  Type *PreallocatedType = nullptr;
+  Type *InAllocaType = nullptr;
 
 public:
   AttrBuilder() = default;
@@ -840,8 +832,8 @@ public:
   AttrBuilder &addAttribute(Attribute::AttrKind Val) {
     assert((unsigned)Val < Attribute::EndAttrKinds &&
            "Attribute out of range!");
-    assert(Attribute::isEnumAttrKind(Val) &&
-           "Adding integer/type attribute without an argument!");
+    assert(!Attribute::doesAttrKindHaveArgument(Val) &&
+           "Adding integer attribute without adding a value!");
     Attrs[Val] = true;
     return *this;
   }
@@ -905,25 +897,20 @@ public:
   /// dereferenceable_or_null attribute exists (zero is returned otherwise).
   uint64_t getDereferenceableOrNullBytes() const { return DerefOrNullBytes; }
 
-  /// Retrieve type for the given type attribute.
-  Type *getTypeAttr(Attribute::AttrKind Kind) const;
-
   /// Retrieve the byval type.
-  Type *getByValType() const { return getTypeAttr(Attribute::ByVal); }
+  Type *getByValType() const { return ByValType; }
 
   /// Retrieve the sret type.
-  Type *getStructRetType() const { return getTypeAttr(Attribute::StructRet); }
+  Type *getStructRetType() const { return StructRetType; }
 
   /// Retrieve the byref type.
-  Type *getByRefType() const { return getTypeAttr(Attribute::ByRef); }
+  Type *getByRefType() const { return ByRefType; }
 
   /// Retrieve the preallocated type.
-  Type *getPreallocatedType() const {
-    return getTypeAttr(Attribute::Preallocated);
-  }
+  Type *getPreallocatedType() const { return PreallocatedType; }
 
   /// Retrieve the inalloca type.
-  Type *getInAllocaType() const { return getTypeAttr(Attribute::InAlloca); }
+  Type *getInAllocaType() const { return InAllocaType; }
 
   /// Retrieve the allocsize args, if the allocsize attribute exists.  If it
   /// doesn't exist, pair(0, 0) is returned.
@@ -971,9 +958,6 @@ public:
 
   /// This turns two ints into the form used internally in Attribute.
   AttrBuilder &addVScaleRangeAttr(unsigned MinValue, unsigned MaxValue);
-
-  /// Add a type attribute with the given type.
-  AttrBuilder &addTypeAttr(Attribute::AttrKind Kind, Type *Ty);
 
   /// This turns a byval type into the form used internally in Attribute.
   AttrBuilder &addByValAttr(Type *Ty);
@@ -1031,13 +1015,6 @@ namespace AttributeFuncs {
 
 /// Which attributes cannot be applied to a type.
 AttrBuilder typeIncompatible(Type *Ty);
-
-/// Get param/return attributes which imply immediate undefined behavior if an
-/// invalid value is passed. For example, this includes noundef (where undef
-/// implies UB), but not nonnull (where null implies poison). It also does not
-/// include attributes like nocapture, which constrain the function
-/// implementation rather than the passed value.
-AttrBuilder getUBImplyingAttributes();
 
 /// \returns Return true if the two functions have compatible target-independent
 /// attributes for inlining purposes.

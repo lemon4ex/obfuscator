@@ -122,6 +122,11 @@ struct ModuleDeps {
   /// arguments containing modules-related paths: "-fmodule-file=", "-o",
   /// "-fmodule-map-file=".
   std::vector<std::string> getCanonicalCommandLineWithoutModulePaths() const;
+
+  /// Gets additional arguments suitable for appending to the original Clang
+  /// command line, excluding arguments containing modules-related paths:
+  /// "-fmodule-file=", "-o", "-fmodule-map-file=".
+  std::vector<std::string> getAdditionalArgsWithoutModulePaths() const;
 };
 
 namespace detail {

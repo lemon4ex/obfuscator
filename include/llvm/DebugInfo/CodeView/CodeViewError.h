@@ -11,6 +11,8 @@
 
 #include "llvm/Support/Error.h"
 
+#include <string>
+
 namespace llvm {
 namespace codeview {
 enum class cv_error_code {

@@ -149,10 +149,11 @@ ARMLegalizerInfo::ARMLegalizerInfo(const ARMSubtarget &ST) {
   // We're keeping these builders around because we'll want to add support for
   // floating point to them.
   auto &LoadStoreBuilder = getActionDefinitionsBuilder({G_LOAD, G_STORE})
-                               .legalForTypesWithMemDesc({{s8, p0, s8, 8},
-                                                          {s16, p0, s16, 8},
-                                                          {s32, p0, s32, 8},
-                                                          {p0, p0, p0, 8}})
+                               .legalForTypesWithMemDesc({{s1, p0, 8, 8},
+                                                          {s8, p0, 8, 8},
+                                                          {s16, p0, 16, 8},
+                                                          {s32, p0, 32, 8},
+                                                          {p0, p0, 32, 8}})
                                .unsupportedIfMemSizeNotPow2();
 
   getActionDefinitionsBuilder(G_FRAME_INDEX).legalFor({p0});
@@ -175,7 +176,7 @@ ARMLegalizerInfo::ARMLegalizerInfo(const ARMSubtarget &ST) {
         .legalFor({s32, s64});
 
     LoadStoreBuilder
-        .legalForTypesWithMemDesc({{s64, p0, s64, 32}})
+        .legalForTypesWithMemDesc({{s64, p0, 64, 32}})
         .maxScalar(0, s32);
     PhiBuilder.legalFor({s64});
 
@@ -219,9 +220,6 @@ ARMLegalizerInfo::ARMLegalizerInfo(const ARMSubtarget &ST) {
     getActionDefinitionsBuilder({G_SITOFP, G_UITOFP})
         .libcallForCartesianProduct({s32, s64}, {s32});
   }
-
-  // Just expand whatever loads and stores are left.
-  LoadStoreBuilder.lower();
 
   if (!ST.useSoftFloat() && ST.hasVFP4Base())
     getActionDefinitionsBuilder(G_FMA).legalFor({s32, s64});
@@ -389,9 +387,9 @@ bool ARMLegalizerInfo::legalizeCustom(LegalizerHelper &Helper,
     StructType *RetTy = StructType::get(Ctx, {ArgTy, ArgTy}, /* Packed */ true);
     Register RetRegs[] = {MRI.createGenericVirtualRegister(LLT::scalar(32)),
                           OriginalResult};
-    auto Status = createLibcall(MIRBuilder, Libcall, {RetRegs, RetTy, 0},
-                                {{MI.getOperand(1).getReg(), ArgTy, 0},
-                                 {MI.getOperand(2).getReg(), ArgTy, 0}});
+    auto Status = createLibcall(MIRBuilder, Libcall, {RetRegs, RetTy},
+                                {{MI.getOperand(1).getReg(), ArgTy},
+                                 {MI.getOperand(2).getReg(), ArgTy}});
     if (Status != LegalizerHelper::Legalized)
       return false;
     break;
@@ -424,10 +422,10 @@ bool ARMLegalizerInfo::legalizeCustom(LegalizerHelper &Helper,
     SmallVector<Register, 2> Results;
     for (auto Libcall : Libcalls) {
       auto LibcallResult = MRI.createGenericVirtualRegister(LLT::scalar(32));
-      auto Status = createLibcall(MIRBuilder, Libcall.LibcallID,
-                                  {LibcallResult, RetTy, 0},
-                                  {{MI.getOperand(2).getReg(), ArgTy, 0},
-                                   {MI.getOperand(3).getReg(), ArgTy, 0}});
+      auto Status =
+          createLibcall(MIRBuilder, Libcall.LibcallID, {LibcallResult, RetTy},
+                        {{MI.getOperand(2).getReg(), ArgTy},
+                         {MI.getOperand(3).getReg(), ArgTy}});
 
       if (Status != LegalizerHelper::Legalized)
         return false;

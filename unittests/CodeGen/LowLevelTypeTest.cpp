@@ -22,7 +22,7 @@ TEST(LowLevelTypeTest, Scalar) {
   LLVMContext C;
   DataLayout DL("");
 
-  for (unsigned S : {0U, 1U, 17U, 32U, 64U, 0xfffffU}) {
+  for (unsigned S : {1U, 17U, 32U, 64U, 0xfffffU}) {
     const LLT Ty = LLT::scalar(S);
 
     // Test kind.
@@ -41,10 +41,8 @@ TEST(LowLevelTypeTest, Scalar) {
     EXPECT_FALSE(Ty != Ty);
 
     // Test Type->LLT conversion.
-    if (S != 0) {
-      Type *IRTy = IntegerType::get(C, S);
-      EXPECT_EQ(Ty, getLLTForType(*IRTy, DL));
-    }
+    Type *IRTy = IntegerType::get(C, S);
+    EXPECT_EQ(Ty, getLLTForType(*IRTy, DL));
   }
 }
 
@@ -52,7 +50,7 @@ TEST(LowLevelTypeTest, Vector) {
   LLVMContext C;
   DataLayout DL("");
 
-  for (unsigned S : {0U, 1U, 17U, 32U, 64U, 0xfffU}) {
+  for (unsigned S : {1U, 17U, 32U, 64U, 0xfffU}) {
     for (auto EC :
          {ElementCount::getFixed(2), ElementCount::getFixed(3),
           ElementCount::getFixed(4), ElementCount::getFixed(32),
@@ -83,9 +81,6 @@ TEST(LowLevelTypeTest, Vector) {
       EXPECT_EQ(EC, VTy.getElementCount());
       if (!EC.isScalable())
         EXPECT_EQ(S * EC.getFixedValue(), VTy.getSizeInBits());
-      else
-        EXPECT_EQ(TypeSize::Scalable(S * EC.getKnownMinValue()),
-                  VTy.getSizeInBits());
 
       // Test equality operators.
       EXPECT_TRUE(VTy == VTy);
@@ -96,11 +91,9 @@ TEST(LowLevelTypeTest, Vector) {
       EXPECT_NE(VTy, STy);
 
       // Test Type->LLT conversion.
-      if (S != 0) {
-        Type *IRSTy = IntegerType::get(C, S);
-        Type *IRTy = VectorType::get(IRSTy, EC);
-        EXPECT_EQ(VTy, getLLTForType(*IRTy, DL));
-      }
+      Type *IRSTy = IntegerType::get(C, S);
+      Type *IRTy = VectorType::get(IRSTy, EC);
+      EXPECT_EQ(VTy, getLLTForType(*IRTy, DL));
     }
   }
 }

@@ -671,9 +671,7 @@ void X86FrameLowering::emitStackProbeInlineGenericLoop(
   MF.insert(MBBIter, testMBB);
   MF.insert(MBBIter, tailMBB);
 
-  Register FinalStackProbed = Uses64BitFramePtr ? X86::R11
-                              : Is64Bit         ? X86::R11D
-                                                : X86::EAX;
+  Register FinalStackProbed = Uses64BitFramePtr ? X86::R11 : X86::R11D;
   BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::COPY), FinalStackProbed)
       .addReg(StackPtr)
       .setMIFlag(MachineInstr::FrameSetup);
@@ -1094,9 +1092,7 @@ void X86FrameLowering::BuildStackAlignAND(MachineBasicBlock &MBB,
       MF.insert(MBBIter, bodyMBB);
       MF.insert(MBBIter, footMBB);
       const unsigned MovMIOpc = Is64Bit ? X86::MOV64mi32 : X86::MOV32mi;
-      Register FinalStackProbed = Uses64BitFramePtr ? X86::R11
-                                  : Is64Bit         ? X86::R11D
-                                                    : X86::EAX;
+      Register FinalStackProbed = Uses64BitFramePtr ? X86::R11 : X86::R11D;
 
       // Setup entry block
       {

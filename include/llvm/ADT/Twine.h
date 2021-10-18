@@ -99,10 +99,16 @@ namespace llvm {
       /// A pointer to an std::string instance.
       StdStringKind,
 
-      /// A Pointer and Length representation. Used for std::string_view,
-      /// StringRef, and SmallString.  Can't use a StringRef here
-      /// because they are not trivally constructible.
-      PtrAndLengthKind,
+      /// A pointer to a StringRef instance.
+      StringRefKind,
+
+#if __cplusplus > 201402L
+      // A pointer to a std::string_view instance.
+      StdStringViewKind,
+#endif
+
+      /// A pointer to a SmallString instance.
+      SmallStringKind,
 
       /// A pointer to a formatv_object_base instance.
       FormatvObjectKind,
@@ -140,10 +146,11 @@ namespace llvm {
       const Twine *twine;
       const char *cString;
       const std::string *stdString;
-      struct {
-        const char *ptr;
-        size_t length;
-      } ptrAndLength;
+      const StringRef *stringRef;
+#if __cplusplus > 201402L
+      const std::string_view *stdStringView;
+#endif
+      const SmallVectorImpl<char> *smallString;
       const formatv_object_base *formatvObject;
       char character;
       unsigned int decUI;
@@ -288,30 +295,24 @@ namespace llvm {
     }
 
 #if __cplusplus > 201402L
-    /// Construct from an std::string_view by converting it to a pointer and
-    /// length.  This handles string_views on a pure API basis, and avoids
-    /// storing one (or a pointer to one) inside a Twine, which avoids problems
-    /// when mixing code compiled under various C++ standards.
+    /// Construct from an std::string_view.
     /*implicit*/ Twine(const std::string_view &Str)
-        : LHSKind(PtrAndLengthKind) {
-      LHS.ptrAndLength.ptr = Str.data();
-      LHS.ptrAndLength.length = Str.length();
+        : LHSKind(StdStringViewKind) {
+      LHS.stdStringView = &Str;
       assert(isValid() && "Invalid twine!");
     }
 #endif
 
     /// Construct from a StringRef.
-    /*implicit*/ Twine(const StringRef &Str) : LHSKind(PtrAndLengthKind) {
-      LHS.ptrAndLength.ptr = Str.data();
-      LHS.ptrAndLength.length = Str.size();
+    /*implicit*/ Twine(const StringRef &Str) : LHSKind(StringRefKind) {
+      LHS.stringRef = &Str;
       assert(isValid() && "Invalid twine!");
     }
 
     /// Construct from a SmallString.
     /*implicit*/ Twine(const SmallVectorImpl<char> &Str)
-        : LHSKind(PtrAndLengthKind) {
-      LHS.ptrAndLength.ptr = Str.data();
-      LHS.ptrAndLength.length = Str.size();
+        : LHSKind(SmallStringKind) {
+      LHS.smallString = &Str;
       assert(isValid() && "Invalid twine!");
     }
 
@@ -374,18 +375,16 @@ namespace llvm {
 
     /// Construct as the concatenation of a C string and a StringRef.
     /*implicit*/ Twine(const char *LHS, const StringRef &RHS)
-        : LHSKind(CStringKind), RHSKind(PtrAndLengthKind) {
+        : LHSKind(CStringKind), RHSKind(StringRefKind) {
       this->LHS.cString = LHS;
-      this->RHS.ptrAndLength.ptr = RHS.data();
-      this->RHS.ptrAndLength.length = RHS.size();
+      this->RHS.stringRef = &RHS;
       assert(isValid() && "Invalid twine!");
     }
 
     /// Construct as the concatenation of a StringRef and a C string.
     /*implicit*/ Twine(const StringRef &LHS, const char *RHS)
-        : LHSKind(PtrAndLengthKind), RHSKind(CStringKind) {
-      this->LHS.ptrAndLength.ptr = LHS.data();
-      this->LHS.ptrAndLength.length = LHS.size();
+        : LHSKind(StringRefKind), RHSKind(CStringKind) {
+      this->LHS.stringRef = &LHS;
       this->RHS.cString = RHS;
       assert(isValid() && "Invalid twine!");
     }
@@ -431,7 +430,11 @@ namespace llvm {
       case EmptyKind:
       case CStringKind:
       case StdStringKind:
-      case PtrAndLengthKind:
+#if __cplusplus > 201402L
+      case StdStringViewKind:
+#endif
+      case StringRefKind:
+      case SmallStringKind:
         return true;
       default:
         return false;
@@ -466,8 +469,14 @@ namespace llvm {
         return StringRef(LHS.cString);
       case StdStringKind:
         return StringRef(*LHS.stdString);
-      case PtrAndLengthKind:
-        return StringRef(LHS.ptrAndLength.ptr, LHS.ptrAndLength.length);
+#if __cplusplus > 201402L
+      case StdStringViewKind:
+        return StringRef(*LHS.stdStringView);
+#endif
+      case StringRefKind:
+        return *LHS.stringRef;
+      case SmallStringKind:
+        return StringRef(LHS.smallString->data(), LHS.smallString->size());
       }
     }
 

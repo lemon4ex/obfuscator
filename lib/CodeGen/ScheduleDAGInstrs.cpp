@@ -807,12 +807,14 @@ void ScheduleDAGInstrs::buildSchedGraph(AAResults *AA,
       DbgMI = nullptr;
     }
 
-    if (MI.isDebugValue() || MI.isDebugPHI()) {
+    if (MI.isDebugValue() || MI.isDebugRef()) {
       DbgMI = &MI;
       continue;
     }
+    if (MI.isDebugLabel())
+      continue;
 
-    if (MI.isDebugLabel() || MI.isDebugRef() || MI.isPseudoProbe())
+    if (MI.isPseudoProbe())
       continue;
 
     SUnit *SU = MISUnitMap[&MI];

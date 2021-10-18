@@ -513,7 +513,7 @@ ReprocessLoop:
 
       // Zap the dead pred's terminator and replace it with unreachable.
       Instruction *TI = P->getTerminator();
-      changeToUnreachable(TI, PreserveLCSSA,
+      changeToUnreachable(TI, /*UseLLVMTrap=*/false, PreserveLCSSA,
                           /*DTU=*/nullptr, MSSAU);
       Changed = true;
     }

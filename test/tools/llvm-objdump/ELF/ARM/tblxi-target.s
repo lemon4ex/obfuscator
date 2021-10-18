@@ -5,12 +5,10 @@
 # RUN:   llvm-objdump -dr - --triple armv8a --no-show-raw-insn | \
 # RUN:   FileCheck %s
 
-# CHECK:      00000000 <foo>:
-# CHECK:      00000004 <test>:
+# CHECK:      <test>:
 # CHECK-NEXT:   4:  nop
-# CHECK-NEXT:   6:  blx  0x0 <foo>   @ imm = #-8
-# CHECK-NEXT:   a:  blx  0x10 <bar>  @ imm = #4
-# CHECK:      00000010 <bar>:
+# CHECK-NEXT:   6:  blx  #-8 <foo>
+# CHECK-NEXT:   a:  blx  #4 <bar>
 
   .arm
 foo:

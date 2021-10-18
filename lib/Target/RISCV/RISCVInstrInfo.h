@@ -147,10 +147,9 @@ public:
                                       MachineInstr &MI,
                                       LiveVariables *LV) const override;
 
-  Register getVLENFactoredAmount(
-      MachineFunction &MF, MachineBasicBlock &MBB,
-      MachineBasicBlock::iterator II, const DebugLoc &DL, int64_t Amount,
-      MachineInstr::MIFlag Flag = MachineInstr::NoFlags) const;
+  Register getVLENFactoredAmount(MachineFunction &MF, MachineBasicBlock &MBB,
+                                 MachineBasicBlock::iterator II,
+                                 const DebugLoc &DL, int64_t Amount) const;
 
   // Returns true if the given MI is an RVV instruction opcode for which we may
   // expect to see a FrameIndex operand. When CheckFIs is true, the instruction

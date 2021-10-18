@@ -467,6 +467,8 @@ llvm::Value *CodeGenFunction::GetVTTParameter(GlobalDecl GD,
   const CXXRecordDecl *RD = cast<CXXMethodDecl>(CurCodeDecl)->getParent();
   const CXXRecordDecl *Base = cast<CXXMethodDecl>(GD.getDecl())->getParent();
 
+  llvm::Value *VTT;
+
   uint64_t SubVTTIndex;
 
   if (Delegating) {
@@ -492,14 +494,15 @@ llvm::Value *CodeGenFunction::GetVTTParameter(GlobalDecl GD,
 
   if (CGM.getCXXABI().NeedsVTTParameter(CurGD)) {
     // A VTT parameter was passed to the constructor, use it.
-    llvm::Value *VTT = LoadCXXVTT();
-    return Builder.CreateConstInBoundsGEP1_64(VoidPtrTy, VTT, SubVTTIndex);
+    VTT = LoadCXXVTT();
+    VTT = Builder.CreateConstInBoundsGEP1_64(VTT, SubVTTIndex);
   } else {
     // We're the complete constructor, so get the VTT by name.
-    llvm::GlobalValue *VTT = CGM.getVTables().GetAddrOfVTT(RD);
-    return Builder.CreateConstInBoundsGEP2_64(
-        VTT->getValueType(), VTT, 0, SubVTTIndex);
+    VTT = CGM.getVTables().GetAddrOfVTT(RD);
+    VTT = Builder.CreateConstInBoundsGEP2_64(VTT, 0, SubVTTIndex);
   }
+
+  return VTT;
 }
 
 namespace {
@@ -926,6 +929,9 @@ namespace {
       Qualifiers Qual = F->getType().getQualifiers();
       if (Qual.hasVolatile() || Qual.hasObjCLifetime())
         return false;
+      if (PointerAuthQualifier Q = F->getType().getPointerAuth())
+        if (Q.isAddressDiscriminated())
+          return false;
       return true;
     }
 
@@ -1741,7 +1747,6 @@ namespace {
           llvm::ConstantInt::get(CGF.SizeTy, PoisonStart.getQuantity());
 
       llvm::Value *OffsetPtr = CGF.Builder.CreateGEP(
-          CGF.Int8Ty,
           CGF.Builder.CreateBitCast(CGF.LoadCXXThis(), CGF.Int8PtrTy),
           OffsetSizePtr);
 
@@ -2523,6 +2528,13 @@ void CodeGenFunction::InitializeVTablePointer(const VPtr &Vptr) {
   VTableAddressPoint = Builder.CreatePointerBitCastOrAddrSpaceCast(
       VTableAddressPoint, VTablePtrTy);
 
+  if (auto &Schema = CGM.getCodeGenOpts().PointerAuth.CXXVTablePointers) {
+    CGPointerAuthInfo PointerAuth = EmitPointerAuthInfo(Schema, nullptr,
+                                                        GlobalDecl(),
+                                                        QualType());
+    VTableAddressPoint = EmitPointerAuthSign(PointerAuth, VTableAddressPoint);
+  }
+
   llvm::StoreInst *Store = Builder.CreateStore(VTableAddressPoint, VTableField);
   TBAAAccessInfo TBAAInfo = CGM.getTBAAVTablePtrAccessInfo(VTablePtrTy);
   CGM.DecorateInstructionWithTBAA(Store, TBAAInfo);
@@ -2621,6 +2633,13 @@ llvm::Value *CodeGenFunction::GetVTablePtr(Address This,
   llvm::Instruction *VTable = Builder.CreateLoad(VTablePtrSrc, "vtable");
   TBAAAccessInfo TBAAInfo = CGM.getTBAAVTablePtrAccessInfo(VTableTy);
   CGM.DecorateInstructionWithTBAA(VTable, TBAAInfo);
+
+  if (auto &Schema = CGM.getCodeGenOpts().PointerAuth.CXXVTablePointers) {
+    CGPointerAuthInfo PointerAuth = EmitPointerAuthInfo(Schema, nullptr,
+                                                        GlobalDecl(),
+                                                        QualType());
+    VTable = cast<llvm::Instruction>(EmitPointerAuthAuth(PointerAuth, VTable));
+  }
 
   if (CGM.getCodeGenOpts().OptimizationLevel > 0 &&
       CGM.getCodeGenOpts().StrictVTablePointers)

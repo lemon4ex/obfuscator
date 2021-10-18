@@ -2772,16 +2772,6 @@ private:
                           IdentifierInfo *ScopeName, SourceLocation ScopeLoc,
                           ParsedAttr::Syntax Syntax);
 
-  void ReplayOpenMPAttributeTokens(CachedTokens &OpenMPTokens) {
-    // If parsing the attributes found an OpenMP directive, emit those tokens
-    // to the parse stream now.
-    if (!OpenMPTokens.empty()) {
-      PP.EnterToken(Tok, /*IsReinject*/ true);
-      PP.EnterTokenStream(OpenMPTokens, /*DisableMacroExpansion*/ true,
-                          /*IsReinject*/ true);
-      ConsumeAnyToken(/*ConsumeCodeCompletionTok*/ true);
-    }
-  }
   void MaybeParseCXX11Attributes(Declarator &D) {
     if (standardAttributesAllowed() && isCXX11AttributeSpecifier()) {
       ParsedAttributesWithRange attrs(AttrFactory);
@@ -2811,18 +2801,8 @@ private:
     return false;
   }
 
-  void ParseOpenMPAttributeArgs(IdentifierInfo *AttrName,
-                                CachedTokens &OpenMPTokens);
-
-  void ParseCXX11AttributeSpecifierInternal(ParsedAttributes &Attrs,
-                                            CachedTokens &OpenMPTokens,
-                                            SourceLocation *EndLoc = nullptr);
-  void ParseCXX11AttributeSpecifier(ParsedAttributes &Attrs,
-                                    SourceLocation *EndLoc = nullptr) {
-    CachedTokens OpenMPTokens;
-    ParseCXX11AttributeSpecifierInternal(Attrs, OpenMPTokens, EndLoc);
-    ReplayOpenMPAttributeTokens(OpenMPTokens);
-  }
+  void ParseCXX11AttributeSpecifier(ParsedAttributes &attrs,
+                                    SourceLocation *EndLoc = nullptr);
   void ParseCXX11Attributes(ParsedAttributesWithRange &attrs,
                             SourceLocation *EndLoc = nullptr);
   /// Parses a C++11 (or C2x)-style attribute argument list. Returns true
@@ -2831,8 +2811,7 @@ private:
                                SourceLocation AttrNameLoc,
                                ParsedAttributes &Attrs, SourceLocation *EndLoc,
                                IdentifierInfo *ScopeName,
-                               SourceLocation ScopeLoc,
-                               CachedTokens &OpenMPTokens);
+                               SourceLocation ScopeLoc);
 
   IdentifierInfo *TryParseCXX11AttributeIdentifier(SourceLocation &Loc);
 
@@ -2930,6 +2909,8 @@ private:
   void ParseAlignmentSpecifier(ParsedAttributes &Attrs,
                                SourceLocation *endLoc = nullptr);
   ExprResult ParseExtIntegerArgument();
+
+  void ParsePtrauthQualifier(ParsedAttributes &Attrs);
 
   VirtSpecifiers::Specifier isCXX11VirtSpecifier(const Token &Tok) const;
   VirtSpecifiers::Specifier isCXX11VirtSpecifier() const {
@@ -3484,10 +3465,24 @@ private:
   // C++11/G++: Type Traits [Type-Traits.html in the GCC manual]
   ExprResult ParseTypeTrait();
 
+  /// Parse the given string as a type.
+  ///
+  /// This is a dangerous utility function currently employed only by API notes.
+  /// It is not a general entry-point for safely parsing types from strings.
+  ///
+  /// \param typeStr The string to be parsed as a type.
+  /// \param context The name of the context in which this string is being
+  /// parsed, which will be used in diagnostics.
+  /// \param includeLoc The location at which this parse was triggered.
+  TypeResult parseTypeFromString(StringRef typeStr, StringRef context,
+                                 SourceLocation includeLoc);
+
   //===--------------------------------------------------------------------===//
   // Embarcadero: Arary and Expression Traits
   ExprResult ParseArrayTypeTrait();
   ExprResult ParseExpressionTrait();
+
+  ExprResult ParseBuiltinPtrauthTypeDiscriminator();
 
   //===--------------------------------------------------------------------===//
   // Preprocessor code-completion pass-through

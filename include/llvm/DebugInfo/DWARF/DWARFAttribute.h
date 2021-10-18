@@ -39,12 +39,9 @@ struct DWARFAttribute {
     return isValid();
   }
 
-  /// Identify DWARF attributes that may contain a pointer to a location list.
-  static bool mayHaveLocationList(dwarf::Attribute Attr);
-
   /// Identifies DWARF attributes that may contain a reference to a
   /// DWARF expression.
-  static bool mayHaveLocationExpr(dwarf::Attribute Attr);
+  static bool mayHaveLocationDescription(dwarf::Attribute Attr);
 };
 
 } // end namespace llvm

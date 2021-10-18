@@ -5,8 +5,6 @@
 # 'bar_alias' is weak alias of global variable 'bar'
 # Generates two exports of the same function, one of them weak
 
-.functype foo_alias () -> (i32)
-
 foo:
   .hidden foo
   .globl  foo

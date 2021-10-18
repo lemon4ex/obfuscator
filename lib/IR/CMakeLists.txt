@@ -24,6 +24,7 @@ add_llvm_component_library(LLVMCore
   Function.cpp
   GCStrategy.cpp
   GVMaterializer.cpp
+  GlobalPtrAuthInfo.cpp
   Globals.cpp
   IRBuilder.cpp
   IRPrintingPasses.cpp

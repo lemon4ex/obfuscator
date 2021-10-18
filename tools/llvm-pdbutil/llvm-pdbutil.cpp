@@ -1430,8 +1430,6 @@ int main(int Argc, const char **Argv) {
   InitLLVM X(Argc, Argv);
   ExitOnErr.setBanner("llvm-pdbutil: ");
 
-  cl::HideUnrelatedOptions(
-      {&opts::TypeCategory, &opts::FilterCategory, &opts::OtherOptions});
   cl::ParseCommandLineOptions(Argc, Argv, "LLVM PDB Dumper\n");
 
   if (opts::BytesSubcommand) {

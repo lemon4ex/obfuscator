@@ -21,7 +21,7 @@
 // TODO List:
 //
 // Future loop memory idioms to recognize:
-//   memcmp, strlen, etc.
+//   memcmp, memmove, strlen, etc.
 // Future floating point idioms to recognize in -ffast-math mode:
 //   fpowi
 // Future integer operation idioms to recognize:
@@ -109,7 +109,6 @@ using namespace llvm;
 
 STATISTIC(NumMemSet, "Number of memset's formed from loop stores");
 STATISTIC(NumMemCpy, "Number of memcpy's formed from loop load+stores");
-STATISTIC(NumMemMove, "Number of memmove's formed from loop load+stores");
 STATISTIC(
     NumShiftUntilBitTest,
     "Number of uncountable loops recognized as 'shift until bitttest' idiom");
@@ -832,7 +831,7 @@ bool LoopIdiomRecognize::processLoopMemCpy(MemCpyInst *MCI,
     return false;
 
   // If we're not allowed to hack on memcpy, we fail.
-  if ((!HasMemcpy && !isa<MemCpyInlineInst>(MCI)) || DisableLIRP::Memcpy)
+  if (!HasMemcpy || DisableLIRP::Memcpy)
     return false;
 
   Value *Dest = MCI->getDest();
@@ -1191,13 +1190,6 @@ bool LoopIdiomRecognize::processLoopStoreOfLoopLoad(
     MaybeAlign LoadAlign, Instruction *TheStore, Instruction *TheLoad,
     const SCEVAddRecExpr *StoreEv, const SCEVAddRecExpr *LoadEv,
     const SCEV *BECount) {
-
-  // FIXME: until llvm.memcpy.inline supports dynamic sizes, we need to
-  // conservatively bail here, since otherwise we may have to transform
-  // llvm.memcpy.inline into llvm.memcpy which is illegal.
-  if (isa<MemCpyInlineInst>(TheStore))
-    return false;
-
   // The trip count of the loop and the base pointer of the addrec SCEV is
   // guaranteed to be loop invariant, which means that it should dominate the
   // header.  This allows us to insert code for it in the preheader.
@@ -1237,35 +1229,23 @@ bool LoopIdiomRecognize::processLoopStoreOfLoopLoad(
   // the return value will read this comment, and leave them alone.
   Changed = true;
 
-  SmallPtrSet<Instruction *, 2> Stores;
+  SmallPtrSet<Instruction *, 1> Stores;
   Stores.insert(TheStore);
 
   bool IsMemCpy = isa<MemCpyInst>(TheStore);
   const StringRef InstRemark = IsMemCpy ? "memcpy" : "load and store";
 
-  bool UseMemMove =
-      mayLoopAccessLocation(StoreBasePtr, ModRefInfo::ModRef, CurLoop, BECount,
-                            StoreSize, *AA, Stores);
-  if (UseMemMove) {
-    // For memmove case it's not enough to guarantee that loop doesn't access
-    // TheStore and TheLoad. Additionally we need to make sure that TheStore is
-    // the only user of TheLoad.
-    if (!TheLoad->hasOneUse())
-      return Changed;
-    Stores.insert(TheLoad);
-    if (mayLoopAccessLocation(StoreBasePtr, ModRefInfo::ModRef, CurLoop,
-                              BECount, StoreSize, *AA, Stores)) {
-      ORE.emit([&]() {
-        return OptimizationRemarkMissed(DEBUG_TYPE, "LoopMayAccessStore",
-                                        TheStore)
-               << ore::NV("Inst", InstRemark) << " in "
-               << ore::NV("Function", TheStore->getFunction())
-               << " function will not be hoisted: "
-               << ore::NV("Reason", "The loop may access store location");
-      });
-      return Changed;
-    }
-    Stores.erase(TheLoad);
+  if (mayLoopAccessLocation(StoreBasePtr, ModRefInfo::ModRef, CurLoop, BECount,
+                            StoreSize, *AA, Stores)) {
+    ORE.emit([&]() {
+      return OptimizationRemarkMissed(DEBUG_TYPE, "LoopMayAccessStore",
+                                      TheStore)
+             << ore::NV("Inst", InstRemark) << " in "
+             << ore::NV("Function", TheStore->getFunction())
+             << " function will not be hoisted: "
+             << ore::NV("Reason", "The loop may access store location");
+    });
+    return Changed;
   }
 
   const SCEV *LdStart = LoadEv->getStart();
@@ -1295,22 +1275,6 @@ bool LoopIdiomRecognize::processLoopStoreOfLoopLoad(
     });
     return Changed;
   }
-  if (UseMemMove) {
-    // Ensure that LoadBasePtr is after StoreBasePtr or before StoreBasePtr for
-    // negative stride. LoadBasePtr shouldn't overlap with StoreBasePtr.
-    int64_t LoadOff = 0, StoreOff = 0;
-    const Value *BP1 = llvm::GetPointerBaseWithConstantOffset(
-        LoadBasePtr->stripPointerCasts(), LoadOff, *DL);
-    const Value *BP2 = llvm::GetPointerBaseWithConstantOffset(
-        StoreBasePtr->stripPointerCasts(), StoreOff, *DL);
-    int64_t LoadSize =
-        DL->getTypeSizeInBits(TheLoad->getType()).getFixedSize() / 8;
-    if (BP1 != BP2 || LoadSize != int64_t(StoreSize))
-      return Changed;
-    if ((!NegStride && LoadOff < StoreOff + int64_t(StoreSize)) ||
-        (NegStride && LoadOff + LoadSize > StoreOff))
-      return Changed;
-  }
 
   if (avoidLIRForMultiBlockLoop())
     return Changed;
@@ -1327,17 +1291,10 @@ bool LoopIdiomRecognize::processLoopStoreOfLoopLoad(
   // Check whether to generate an unordered atomic memcpy:
   //  If the load or store are atomic, then they must necessarily be unordered
   //  by previous checks.
-  if (!TheStore->isAtomic() && !TheLoad->isAtomic()) {
-    if (UseMemMove)
-      NewCall = Builder.CreateMemMove(StoreBasePtr, StoreAlign, LoadBasePtr,
-                                      LoadAlign, NumBytes);
-    else
-      NewCall = Builder.CreateMemCpy(StoreBasePtr, StoreAlign, LoadBasePtr,
-                                     LoadAlign, NumBytes);
-  } else {
-    // For now don't support unordered atomic memmove.
-    if (UseMemMove)
-      return Changed;
+  if (!TheStore->isAtomic() && !TheLoad->isAtomic())
+    NewCall = Builder.CreateMemCpy(StoreBasePtr, StoreAlign, LoadBasePtr,
+                                   LoadAlign, NumBytes);
+  else {
     // We cannot allow unaligned ops for unordered load/store, so reject
     // anything where the alignment isn't at least the element size.
     assert((StoreAlign.hasValue() && LoadAlign.hasValue()) &&
@@ -1367,7 +1324,7 @@ bool LoopIdiomRecognize::processLoopStoreOfLoopLoad(
     MSSAU->insertDef(cast<MemoryDef>(NewMemAcc), true);
   }
 
-  LLVM_DEBUG(dbgs() << "  Formed new call: " << *NewCall << "\n"
+  LLVM_DEBUG(dbgs() << "  Formed memcpy: " << *NewCall << "\n"
                     << "    from load ptr=" << *LoadEv << " at: " << *TheLoad
                     << "\n"
                     << "    from store ptr=" << *StoreEv << " at: " << *TheStore
@@ -1390,10 +1347,7 @@ bool LoopIdiomRecognize::processLoopStoreOfLoopLoad(
   deleteDeadInstruction(TheStore);
   if (MSSAU && VerifyMemorySSA)
     MSSAU->getMemorySSA()->verifyMemorySSA();
-  if (UseMemMove)
-    ++NumMemMove;
-  else
-    ++NumMemCpy;
+  ++NumMemCpy;
   ExpCleaner.markResultUsed();
   return true;
 }

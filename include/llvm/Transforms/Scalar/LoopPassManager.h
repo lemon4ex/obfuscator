@@ -102,24 +102,23 @@ public:
   /// passes in the pass manager later.
   template <typename PassT>
   std::enable_if_t<is_detected<HasRunOnLoopT, PassT>::value>
-  addPass(PassT &&Pass) {
+  addPass(PassT Pass) {
     using LoopPassModelT =
         detail::PassModel<Loop, PassT, PreservedAnalyses, LoopAnalysisManager,
                           LoopStandardAnalysisResults &, LPMUpdater &>;
     IsLoopNestPass.push_back(false);
-    LoopPasses.emplace_back(new LoopPassModelT(std::forward<PassT>(Pass)));
+    LoopPasses.emplace_back(new LoopPassModelT(std::move(Pass)));
   }
 
   template <typename PassT>
   std::enable_if_t<!is_detected<HasRunOnLoopT, PassT>::value>
-  addPass(PassT &&Pass) {
+  addPass(PassT Pass) {
     using LoopNestPassModelT =
         detail::PassModel<LoopNest, PassT, PreservedAnalyses,
                           LoopAnalysisManager, LoopStandardAnalysisResults &,
                           LPMUpdater &>;
     IsLoopNestPass.push_back(true);
-    LoopNestPasses.emplace_back(
-        new LoopNestPassModelT(std::forward<PassT>(Pass)));
+    LoopNestPasses.emplace_back(new LoopNestPassModelT(std::move(Pass)));
   }
 
   // Specializations of `addPass` for `RepeatedPass`. These are necessary since
@@ -127,7 +126,7 @@ public:
   // detection of `HasRunOnLoopT`.
   template <typename PassT>
   std::enable_if_t<is_detected<HasRunOnLoopT, PassT>::value>
-  addPass(RepeatedPass<PassT> &&Pass) {
+  addPass(RepeatedPass<PassT> Pass) {
     using RepeatedLoopPassModelT =
         detail::PassModel<Loop, RepeatedPass<PassT>, PreservedAnalyses,
                           LoopAnalysisManager, LoopStandardAnalysisResults &,
@@ -138,7 +137,7 @@ public:
 
   template <typename PassT>
   std::enable_if_t<!is_detected<HasRunOnLoopT, PassT>::value>
-  addPass(RepeatedPass<PassT> &&Pass) {
+  addPass(RepeatedPass<PassT> Pass) {
     using RepeatedLoopNestPassModelT =
         detail::PassModel<LoopNest, RepeatedPass<PassT>, PreservedAnalyses,
                           LoopAnalysisManager, LoopStandardAnalysisResults &,
@@ -446,13 +445,13 @@ private:
 template <typename LoopPassT>
 inline std::enable_if_t<is_detected<HasRunOnLoopT, LoopPassT>::value,
                         FunctionToLoopPassAdaptor>
-createFunctionToLoopPassAdaptor(LoopPassT &&Pass, bool UseMemorySSA = false,
+createFunctionToLoopPassAdaptor(LoopPassT Pass, bool UseMemorySSA = false,
                                 bool UseBlockFrequencyInfo = false) {
   using PassModelT =
       detail::PassModel<Loop, LoopPassT, PreservedAnalyses, LoopAnalysisManager,
                         LoopStandardAnalysisResults &, LPMUpdater &>;
   return FunctionToLoopPassAdaptor(
-      std::make_unique<PassModelT>(std::forward<LoopPassT>(Pass)), UseMemorySSA,
+      std::make_unique<PassModelT>(std::move(Pass)), UseMemorySSA,
       UseBlockFrequencyInfo, false);
 }
 
@@ -461,10 +460,10 @@ createFunctionToLoopPassAdaptor(LoopPassT &&Pass, bool UseMemorySSA = false,
 template <typename LoopNestPassT>
 inline std::enable_if_t<!is_detected<HasRunOnLoopT, LoopNestPassT>::value,
                         FunctionToLoopPassAdaptor>
-createFunctionToLoopPassAdaptor(LoopNestPassT &&Pass, bool UseMemorySSA = false,
+createFunctionToLoopPassAdaptor(LoopNestPassT Pass, bool UseMemorySSA = false,
                                 bool UseBlockFrequencyInfo = false) {
   LoopPassManager LPM;
-  LPM.addPass(std::forward<LoopNestPassT>(Pass));
+  LPM.addPass(std::move(Pass));
   using PassModelT =
       detail::PassModel<Loop, LoopPassManager, PreservedAnalyses,
                         LoopAnalysisManager, LoopStandardAnalysisResults &,
@@ -477,7 +476,7 @@ createFunctionToLoopPassAdaptor(LoopNestPassT &&Pass, bool UseMemorySSA = false,
 /// be in loop-nest mode if the pass manager contains only loop-nest passes.
 template <>
 inline FunctionToLoopPassAdaptor
-createFunctionToLoopPassAdaptor<LoopPassManager>(LoopPassManager &&LPM,
+createFunctionToLoopPassAdaptor<LoopPassManager>(LoopPassManager LPM,
                                                  bool UseMemorySSA,
                                                  bool UseBlockFrequencyInfo) {
   // Check if LPM contains any loop pass and if it does not, returns an adaptor

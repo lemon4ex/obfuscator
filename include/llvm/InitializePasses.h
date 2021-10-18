@@ -124,7 +124,6 @@ void initializeCrossDSOCFIPass(PassRegistry&);
 void initializeDAEPass(PassRegistry&);
 void initializeDAHPass(PassRegistry&);
 void initializeDCELegacyPassPass(PassRegistry&);
-void initializeDFAJumpThreadingLegacyPassPass(PassRegistry &);
 void initializeDSELegacyPassPass(PassRegistry&);
 void initializeDataFlowSanitizerLegacyPassPass(PassRegistry &);
 void initializeDeadMachineInstructionElimPass(PassRegistry&);
@@ -383,7 +382,6 @@ void initializeRegionOnlyViewerPass(PassRegistry&);
 void initializeRegionPrinterPass(PassRegistry&);
 void initializeRegionViewerPass(PassRegistry&);
 void initializeRegisterCoalescerPass(PassRegistry&);
-void initializeRemoveRedundantDebugValuesPass(PassRegistry&);
 void initializeRenameIndependentSubregsPass(PassRegistry&);
 void initializeReplaceWithVeclibLegacyPass(PassRegistry &);
 void initializeResetMachineFunctionPass(PassRegistry&);
@@ -412,6 +410,7 @@ void initializeSingleLoopExtractorPass(PassRegistry&);
 void initializeSinkingLegacyPassPass(PassRegistry&);
 void initializeSjLjEHPreparePass(PassRegistry&);
 void initializeSlotIndexesPass(PassRegistry&);
+void initializeSoftPointerAuthLegacyPassPass(PassRegistry&);
 void initializeSpeculativeExecutionLegacyPassPass(PassRegistry&);
 void initializeSpillPlacementPass(PassRegistry&);
 void initializeStackColoringPass(PassRegistry&);
@@ -455,7 +454,6 @@ void initializeWinEHPreparePass(PassRegistry&);
 void initializeWriteBitcodePassPass(PassRegistry&);
 void initializeWriteThinLTOBitcodePass(PassRegistry&);
 void initializeXRayInstrumentationPass(PassRegistry&);
-void initializeFlatteningPass(PassRegistry&);
 
 } // end namespace llvm
 

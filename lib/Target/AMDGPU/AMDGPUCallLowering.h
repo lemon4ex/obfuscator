@@ -24,11 +24,11 @@ class MachineInstrBuilder;
 class SIMachineFunctionInfo;
 
 class AMDGPUCallLowering final : public CallLowering {
-  void lowerParameterPtr(Register DstReg, MachineIRBuilder &B,
+  void lowerParameterPtr(Register DstReg, MachineIRBuilder &B, Type *ParamTy,
                          uint64_t Offset) const;
 
-  void lowerParameter(MachineIRBuilder &B, ArgInfo &AI, uint64_t Offset,
-                      Align Alignment) const;
+  void lowerParameter(MachineIRBuilder &B, Type *ParamTy, uint64_t Offset,
+                      Align Alignment, Register DstReg) const;
 
   bool canLowerReturn(MachineFunction &MF, CallingConv::ID CallConv,
                       SmallVectorImpl<BaseArgInfo> &Outs,

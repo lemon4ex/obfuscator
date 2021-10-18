@@ -311,7 +311,7 @@ endif()
 
 set(CLANG_SYSTEMZ_DEFAULT_ARCH "z10" CACHE STRING "SystemZ Default Arch")
 
-set(CLANG_VENDOR "Obfuscator-LLVM" CACHE STRING
+set(CLANG_VENDOR ${PACKAGE_VENDOR} CACHE STRING
   "Vendor-specific text for showing with version information.")
 
 set(CLANG_REPOSITORY_STRING "" CACHE STRING

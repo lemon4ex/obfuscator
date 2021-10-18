@@ -13,6 +13,7 @@ Clang Language Extensions
    BlockLanguageSpec
    Block-ABI-Apple
    AutomaticReferenceCounting
+   PointerAuthentication
    MatrixTypes
 
 Introduction
@@ -3085,6 +3086,10 @@ reordering of memory accesses and side effect instructions. Other instructions
 like simple arithmetic may be reordered around the intrinsic. If you expect to
 have no reordering at all, use inline assembly instead.
 
+Pointer Authentication
+^^^^^^^^^^^^^^^^^^^^^^
+See :doc:`PointerAuthentication`.
+
 X86/X86-64 Language Extensions
 ------------------------------
 
@@ -3409,9 +3414,6 @@ to the same code size limit as with ``unroll(enable)``.
   }
 
 Unrolling of a loop can be prevented by specifying ``unroll(disable)``.
-
-Loop unroll parameters can be controlled by options
-`-mllvm -unroll-count=n` and `-mllvm -pragma-unroll-threshold=n`.
 
 Loop Distribution
 -----------------

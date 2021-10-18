@@ -682,10 +682,9 @@ private:
     return getFnValueByID(ValNo, Ty);
   }
 
-  /// Upgrades old-style typeless byval/sret/inalloca attributes by adding the
-  /// corresponding argument's pointee type. Also upgrades intrinsics that now
-  /// require an elementtype attribute.
-  void propagateAttributeTypes(CallBase *CB, ArrayRef<Type *> ArgsTys);
+  /// Upgrades old-style typeless byval or sret attributes by adding the
+  /// corresponding argument's pointee type.
+  void propagateByValSRetTypes(CallBase *CB, ArrayRef<Type *> ArgsTys);
 
   /// Converts alignment exponent (i.e. power of two (or zero)) to the
   /// corresponding alignment to use. If alignment is too large, returns
@@ -1128,7 +1127,7 @@ static Comdat::SelectionKind getDecodedComdatSelectionKind(unsigned Val) {
   case bitc::COMDAT_SELECTION_KIND_LARGEST:
     return Comdat::Largest;
   case bitc::COMDAT_SELECTION_KIND_NO_DUPLICATES:
-    return Comdat::NoDeduplicate;
+    return Comdat::NoDuplicates;
   case bitc::COMDAT_SELECTION_KIND_SAME_SIZE:
     return Comdat::SameSize;
   }
@@ -1280,8 +1279,6 @@ static void addRawAttributeValue(AttrBuilder &B, uint64_t Val) {
         B.addAlignmentAttr(1ULL << ((A >> 16) - 1));
       else if (I == Attribute::StackAlignment)
         B.addStackAlignmentAttr(1ULL << ((A >> 26)-1));
-      else if (Attribute::isTypeAttrKind(I))
-        B.addTypeAttr(I, nullptr); // Type will be auto-upgraded.
       else
         B.addAttribute(I);
     }
@@ -1388,8 +1385,6 @@ static Attribute::AttrKind getAttrFromCode(uint64_t Code) {
     return Attribute::Cold;
   case bitc::ATTR_KIND_CONVERGENT:
     return Attribute::Convergent;
-  case bitc::ATTR_KIND_ELEMENTTYPE:
-    return Attribute::ElementType;
   case bitc::ATTR_KIND_INACCESSIBLEMEM_ONLY:
     return Attribute::InaccessibleMemOnly;
   case bitc::ATTR_KIND_INACCESSIBLEMEM_OR_ARGMEMONLY:
@@ -1444,8 +1439,6 @@ static Attribute::AttrKind getAttrFromCode(uint64_t Code) {
     return Attribute::NoSync;
   case bitc::ATTR_KIND_NOCF_CHECK:
     return Attribute::NoCfCheck;
-  case bitc::ATTR_KIND_NO_PROFILE:
-    return Attribute::NoProfile;
   case bitc::ATTR_KIND_NO_UNWIND:
     return Attribute::NoUnwind;
   case bitc::ATTR_KIND_NO_SANITIZE_COVERAGE:
@@ -1604,16 +1597,12 @@ Error BitcodeReader::parseAttributeGroupBlock() {
             B.addStructRetAttr(nullptr);
           else if (Kind == Attribute::InAlloca)
             B.addInAllocaAttr(nullptr);
-          else if (Attribute::isEnumAttrKind(Kind))
-            B.addAttribute(Kind);
-          else
-            return error("Not an enum attribute");
+
+          B.addAttribute(Kind);
         } else if (Record[i] == 1) { // Integer attribute
           Attribute::AttrKind Kind;
           if (Error Err = parseAttrKind(Record[++i], &Kind))
             return Err;
-          if (!Attribute::isIntAttrKind(Kind))
-            return error("Not an int attribute");
           if (Kind == Attribute::Alignment)
             B.addAlignmentAttr(Record[++i]);
           else if (Kind == Attribute::StackAlignment)
@@ -1651,10 +1640,17 @@ Error BitcodeReader::parseAttributeGroupBlock() {
           Attribute::AttrKind Kind;
           if (Error Err = parseAttrKind(Record[++i], &Kind))
             return Err;
-          if (!Attribute::isTypeAttrKind(Kind))
-            return error("Not a type attribute");
-
-          B.addTypeAttr(Kind, HasType ? getTypeByID(Record[++i]) : nullptr);
+          if (Kind == Attribute::ByVal) {
+            B.addByValAttr(HasType ? getTypeByID(Record[++i]) : nullptr);
+          } else if (Kind == Attribute::StructRet) {
+            B.addStructRetAttr(HasType ? getTypeByID(Record[++i]) : nullptr);
+          } else if (Kind == Attribute::ByRef) {
+            B.addByRefAttr(getTypeByID(Record[++i]));
+          } else if (Kind == Attribute::Preallocated) {
+            B.addPreallocatedAttr(getTypeByID(Record[++i]));
+          } else if (Kind == Attribute::InAlloca) {
+            B.addInAllocaAttr(HasType ? getTypeByID(Record[++i]) : nullptr);
+          }
         }
       }
 
@@ -3335,9 +3331,6 @@ Error BitcodeReader::parseFunctionRecord(ArrayRef<uint64_t> Record) {
       if (!Func->hasParamAttribute(i, Kind))
         continue;
 
-      if (Func->getParamAttribute(i, Kind).getValueAsType())
-        continue;
-
       Func->removeParamAttr(i, Kind);
 
       Type *PTy = cast<FunctionType>(FTy)->getParamType(i);
@@ -3812,7 +3805,7 @@ Error BitcodeReader::typeCheckLoadStoreInst(Type *ValType, Type *PtrType) {
   return Error::success();
 }
 
-void BitcodeReader::propagateAttributeTypes(CallBase *CB,
+void BitcodeReader::propagateByValSRetTypes(CallBase *CB,
                                             ArrayRef<Type *> ArgsTys) {
   for (unsigned i = 0; i != CB->arg_size(); ++i) {
     for (Attribute::AttrKind Kind : {Attribute::ByVal, Attribute::StructRet,
@@ -3840,19 +3833,6 @@ void BitcodeReader::propagateAttributeTypes(CallBase *CB,
 
       CB->addParamAttr(i, NewAttr);
     }
-  }
-
-  switch (CB->getIntrinsicID()) {
-  case Intrinsic::preserve_array_access_index:
-  case Intrinsic::preserve_struct_access_index:
-    if (!CB->getAttributes().getParamElementType(0)) {
-      Type *ElTy = cast<PointerType>(ArgsTys[0])->getElementType();
-      Attribute NewAttr = Attribute::get(Context, Attribute::ElementType, ElTy);
-      CB->addParamAttr(0, NewAttr);
-    }
-    break;
-  default:
-    break;
   }
 }
 
@@ -4695,7 +4675,7 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
       cast<InvokeInst>(I)->setCallingConv(
           static_cast<CallingConv::ID>(CallingConv::MaxID & CCInfo));
       cast<InvokeInst>(I)->setAttributes(PAL);
-      propagateAttributeTypes(cast<CallBase>(I), ArgsTys);
+      propagateByValSRetTypes(cast<CallBase>(I), ArgsTys);
 
       break;
     }
@@ -5334,7 +5314,7 @@ Error BitcodeReader::parseFunctionBody(Function *F) {
         TCK = CallInst::TCK_NoTail;
       cast<CallInst>(I)->setTailCallKind(TCK);
       cast<CallInst>(I)->setAttributes(PAL);
-      propagateAttributeTypes(cast<CallBase>(I), ArgsTys);
+      propagateByValSRetTypes(cast<CallBase>(I), ArgsTys);
       if (FMF.any()) {
         if (!isa<FPMathOperator>(I))
           return error("Fast-math-flags specified for call without "

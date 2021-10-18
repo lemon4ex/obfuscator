@@ -43,33 +43,26 @@ using namespace llvm;
 
 static mc::RegisterMCTargetOptionsFlags MOF;
 
-static cl::OptionCategory MCCategory("MC Options");
-
-static cl::opt<std::string> InputFilename(cl::Positional,
-                                          cl::desc("<input file>"),
-                                          cl::init("-"), cl::cat(MCCategory));
+static cl::opt<std::string>
+InputFilename(cl::Positional, cl::desc("<input file>"), cl::init("-"));
 
 static cl::list<std::string>
-    DisassemblerOptions("M", cl::desc("Disassembler options"),
-                        cl::cat(MCCategory));
+    DisassemblerOptions("M", cl::desc("Disassembler options"));
 
 static cl::opt<std::string> OutputFilename("o", cl::desc("Output filename"),
                                            cl::value_desc("filename"),
-                                           cl::init("-"), cl::cat(MCCategory));
+                                           cl::init("-"));
 
 static cl::opt<std::string> SplitDwarfFile("split-dwarf-file",
                                            cl::desc("DWO output filename"),
-                                           cl::value_desc("filename"),
-                                           cl::cat(MCCategory));
+                                           cl::value_desc("filename"));
 
-static cl::opt<bool> ShowEncoding("show-encoding",
-                                  cl::desc("Show instruction encodings"),
-                                  cl::cat(MCCategory));
+static cl::opt<bool>
+ShowEncoding("show-encoding", cl::desc("Show instruction encodings"));
 
 static cl::opt<bool> RelaxELFRel(
     "relax-relocations", cl::init(true),
-    cl::desc("Emit R_X86_64_GOTPCRELX instead of R_X86_64_GOTPCREL"),
-    cl::cat(MCCategory));
+    cl::desc("Emit R_X86_64_GOTPCRELX instead of R_X86_64_GOTPCREL"));
 
 static cl::opt<DebugCompressionType> CompressDebugSections(
     "compress-debug-sections", cl::ValueOptional,
@@ -79,37 +72,29 @@ static cl::opt<DebugCompressionType> CompressDebugSections(
                clEnumValN(DebugCompressionType::Z, "zlib",
                           "Use zlib compression"),
                clEnumValN(DebugCompressionType::GNU, "zlib-gnu",
-                          "Use zlib-gnu compression (deprecated)")),
-    cl::cat(MCCategory));
+                          "Use zlib-gnu compression (deprecated)")));
 
 static cl::opt<bool>
-    ShowInst("show-inst", cl::desc("Show internal instruction representation"),
-             cl::cat(MCCategory));
+ShowInst("show-inst", cl::desc("Show internal instruction representation"));
 
 static cl::opt<bool>
-    ShowInstOperands("show-inst-operands",
-                     cl::desc("Show instructions operands as parsed"),
-                     cl::cat(MCCategory));
+ShowInstOperands("show-inst-operands",
+                 cl::desc("Show instructions operands as parsed"));
 
 static cl::opt<unsigned>
-    OutputAsmVariant("output-asm-variant",
-                     cl::desc("Syntax variant to use for output printing"),
-                     cl::cat(MCCategory));
+OutputAsmVariant("output-asm-variant",
+                 cl::desc("Syntax variant to use for output printing"));
 
 static cl::opt<bool>
-    PrintImmHex("print-imm-hex", cl::init(false),
-                cl::desc("Prefer hex format for immediate values"),
-                cl::cat(MCCategory));
+PrintImmHex("print-imm-hex", cl::init(false),
+            cl::desc("Prefer hex format for immediate values"));
 
 static cl::list<std::string>
-    DefineSymbol("defsym",
-                 cl::desc("Defines a symbol to be an integer constant"),
-                 cl::cat(MCCategory));
+DefineSymbol("defsym", cl::desc("Defines a symbol to be an integer constant"));
 
 static cl::opt<bool>
     PreserveComments("preserve-comments",
-                     cl::desc("Preserve Comments in outputted assembly"),
-                     cl::cat(MCCategory));
+                     cl::desc("Preserve Comments in outputted assembly"));
 
 enum OutputFileType {
   OFT_Null,
@@ -117,101 +102,86 @@ enum OutputFileType {
   OFT_ObjectFile
 };
 static cl::opt<OutputFileType>
-    FileType("filetype", cl::init(OFT_AssemblyFile),
-             cl::desc("Choose an output file type:"),
-             cl::values(clEnumValN(OFT_AssemblyFile, "asm",
-                                   "Emit an assembly ('.s') file"),
-                        clEnumValN(OFT_Null, "null",
-                                   "Don't emit anything (for timing purposes)"),
-                        clEnumValN(OFT_ObjectFile, "obj",
-                                   "Emit a native object ('.o') file")),
-             cl::cat(MCCategory));
-
-static cl::list<std::string> IncludeDirs("I",
-                                         cl::desc("Directory of include files"),
-                                         cl::value_desc("directory"),
-                                         cl::Prefix, cl::cat(MCCategory));
-
-static cl::opt<std::string>
-    ArchName("arch",
-             cl::desc("Target arch to assemble for, "
-                      "see -version for available targets"),
-             cl::cat(MCCategory));
-
-static cl::opt<std::string>
-    TripleName("triple",
-               cl::desc("Target triple to assemble for, "
-                        "see -version for available targets"),
-               cl::cat(MCCategory));
-
-static cl::opt<std::string>
-    MCPU("mcpu",
-         cl::desc("Target a specific cpu type (-mcpu=help for details)"),
-         cl::value_desc("cpu-name"), cl::init(""), cl::cat(MCCategory));
+FileType("filetype", cl::init(OFT_AssemblyFile),
+  cl::desc("Choose an output file type:"),
+  cl::values(
+       clEnumValN(OFT_AssemblyFile, "asm",
+                  "Emit an assembly ('.s') file"),
+       clEnumValN(OFT_Null, "null",
+                  "Don't emit anything (for timing purposes)"),
+       clEnumValN(OFT_ObjectFile, "obj",
+                  "Emit a native object ('.o') file")));
 
 static cl::list<std::string>
-    MAttrs("mattr", cl::CommaSeparated,
-           cl::desc("Target specific attributes (-mattr=help for details)"),
-           cl::value_desc("a1,+a2,-a3,..."), cl::cat(MCCategory));
+IncludeDirs("I", cl::desc("Directory of include files"),
+            cl::value_desc("directory"), cl::Prefix);
+
+static cl::opt<std::string>
+ArchName("arch", cl::desc("Target arch to assemble for, "
+                          "see -version for available targets"));
+
+static cl::opt<std::string>
+TripleName("triple", cl::desc("Target triple to assemble for, "
+                              "see -version for available targets"));
+
+static cl::opt<std::string>
+MCPU("mcpu",
+     cl::desc("Target a specific cpu type (-mcpu=help for details)"),
+     cl::value_desc("cpu-name"),
+     cl::init(""));
+
+static cl::list<std::string>
+MAttrs("mattr",
+  cl::CommaSeparated,
+  cl::desc("Target specific attributes (-mattr=help for details)"),
+  cl::value_desc("a1,+a2,-a3,..."));
 
 static cl::opt<bool> PIC("position-independent",
-                         cl::desc("Position independent"), cl::init(false),
-                         cl::cat(MCCategory));
+                         cl::desc("Position independent"), cl::init(false));
 
 static cl::opt<bool>
     LargeCodeModel("large-code-model",
                    cl::desc("Create cfi directives that assume the code might "
-                            "be more than 2gb away"),
-                   cl::cat(MCCategory));
+                            "be more than 2gb away"));
 
 static cl::opt<bool>
-    NoInitialTextSection("n",
-                         cl::desc("Don't assume assembly file starts "
-                                  "in the text section"),
-                         cl::cat(MCCategory));
+NoInitialTextSection("n", cl::desc("Don't assume assembly file starts "
+                                   "in the text section"));
 
 static cl::opt<bool>
-    GenDwarfForAssembly("g",
-                        cl::desc("Generate dwarf debugging info for assembly "
-                                 "source files"),
-                        cl::cat(MCCategory));
+GenDwarfForAssembly("g", cl::desc("Generate dwarf debugging info for assembly "
+                                  "source files"));
 
 static cl::opt<std::string>
-    DebugCompilationDir("fdebug-compilation-dir",
-                        cl::desc("Specifies the debug info's compilation dir"),
-                        cl::cat(MCCategory));
+DebugCompilationDir("fdebug-compilation-dir",
+                    cl::desc("Specifies the debug info's compilation dir"));
 
-static cl::list<std::string> DebugPrefixMap(
-    "fdebug-prefix-map", cl::desc("Map file source paths in debug info"),
-    cl::value_desc("= separated key-value pairs"), cl::cat(MCCategory));
+static cl::list<std::string>
+DebugPrefixMap("fdebug-prefix-map",
+               cl::desc("Map file source paths in debug info"),
+               cl::value_desc("= separated key-value pairs"));
 
-static cl::opt<std::string> MainFileName(
-    "main-file-name",
-    cl::desc("Specifies the name we should consider the input file"),
-    cl::cat(MCCategory));
+static cl::opt<std::string>
+MainFileName("main-file-name",
+             cl::desc("Specifies the name we should consider the input file"));
 
 static cl::opt<bool> SaveTempLabels("save-temp-labels",
-                                    cl::desc("Don't discard temporary labels"),
-                                    cl::cat(MCCategory));
+                                    cl::desc("Don't discard temporary labels"));
 
 static cl::opt<bool> LexMasmIntegers(
     "masm-integers",
-    cl::desc("Enable binary and hex masm integers (0b110 and 0ABCh)"),
-    cl::cat(MCCategory));
+    cl::desc("Enable binary and hex masm integers (0b110 and 0ABCh)"));
 
 static cl::opt<bool> LexMasmHexFloats(
     "masm-hexfloats",
-    cl::desc("Enable MASM-style hex float initializers (3F800000r)"),
-    cl::cat(MCCategory));
+    cl::desc("Enable MASM-style hex float initializers (3F800000r)"));
 
 static cl::opt<bool> LexMotorolaIntegers(
     "motorola-integers",
-    cl::desc("Enable binary and hex Motorola integers (%110 and $ABC)"),
-    cl::cat(MCCategory));
+    cl::desc("Enable binary and hex Motorola integers (%110 and $ABC)"));
 
 static cl::opt<bool> NoExecStack("no-exec-stack",
-                                 cl::desc("File doesn't need an exec stack"),
-                                 cl::cat(MCCategory));
+                                 cl::desc("File doesn't need an exec stack"));
 
 enum ActionType {
   AC_AsLex,
@@ -220,16 +190,17 @@ enum ActionType {
   AC_MDisassemble,
 };
 
-static cl::opt<ActionType> Action(
-    cl::desc("Action to perform:"), cl::init(AC_Assemble),
-    cl::values(clEnumValN(AC_AsLex, "as-lex", "Lex tokens from a .s file"),
-               clEnumValN(AC_Assemble, "assemble",
-                          "Assemble a .s file (default)"),
-               clEnumValN(AC_Disassemble, "disassemble",
-                          "Disassemble strings of hex bytes"),
-               clEnumValN(AC_MDisassemble, "mdis",
-                          "Marked up disassembly of strings of hex bytes")),
-    cl::cat(MCCategory));
+static cl::opt<ActionType>
+Action(cl::desc("Action to perform:"),
+       cl::init(AC_Assemble),
+       cl::values(clEnumValN(AC_AsLex, "as-lex",
+                             "Lex tokens from a .s file"),
+                  clEnumValN(AC_Assemble, "assemble",
+                             "Assemble a .s file (default)"),
+                  clEnumValN(AC_Disassemble, "disassemble",
+                             "Disassemble strings of hex bytes"),
+                  clEnumValN(AC_MDisassemble, "mdis",
+                             "Marked up disassembly of strings of hex bytes")));
 
 static const Target *GetTarget(const char *ProgName) {
   // Figure out the target triple.
@@ -360,7 +331,6 @@ int main(int argc, char **argv) {
   // Register the target printer for --version.
   cl::AddExtraVersionPrinter(TargetRegistry::printRegisteredTargetsForVersion);
 
-  cl::HideUnrelatedOptions({&MCCategory, &getColorCategory()});
   cl::ParseCommandLineOptions(argc, argv, "llvm machine code playground\n");
   const MCTargetOptions MCOptions = mc::InitMCTargetOptionsFromFlags();
   setDwarfDebugFlags(argc, argv);

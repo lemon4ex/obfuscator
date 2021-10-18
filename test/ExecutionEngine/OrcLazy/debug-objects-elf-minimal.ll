@@ -1,5 +1,3 @@
-; REQUIRES: x86_64
-
 ; In-memory debug-object contains some basic DWARF
 ;
 ; RUN: lli --jit-kind=orc-lazy --per-module-lazy --jit-linker=rtdyld \

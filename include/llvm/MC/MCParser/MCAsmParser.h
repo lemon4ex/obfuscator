@@ -18,7 +18,6 @@
 #include "llvm/MC/MCParser/MCAsmLexer.h"
 #include "llvm/Support/SMLoc.h"
 #include <cstdint>
-#include <ctime>
 #include <string>
 #include <utility>
 
@@ -203,8 +202,8 @@ public:
 
   /// Parse MS-style inline assembly.
   virtual bool parseMSInlineAsm(
-      std::string &AsmString, unsigned &NumOutputs, unsigned &NumInputs,
-      SmallVectorImpl<std::pair<void *, bool>> &OpDecls,
+      void *AsmLoc, std::string &AsmString, unsigned &NumOutputs,
+      unsigned &NumInputs, SmallVectorImpl<std::pair<void *, bool>> &OpDecls,
       SmallVectorImpl<std::string> &Constraints,
       SmallVectorImpl<std::string> &Clobbers, const MCInstrInfo *MII,
       const MCInstPrinter *IP, MCAsmParserSemaCallback &SI) = 0;
@@ -338,9 +337,6 @@ public:
   /// \return - False on success.
   virtual bool parseParenExprOfDepth(unsigned ParenDepth, const MCExpr *&Res,
                                      SMLoc &EndLoc) = 0;
-
-  /// Parse a .gnu_attribute.
-  bool parseGNUAttribute(SMLoc L, int64_t &Tag, int64_t &IntegerValue);
 };
 
 /// Create an MCAsmParser instance for parsing assembly similar to gas syntax
@@ -349,7 +345,7 @@ MCAsmParser *createMCAsmParser(SourceMgr &, MCContext &, MCStreamer &,
 
 /// Create an MCAsmParser instance for parsing Microsoft MASM-style assembly
 MCAsmParser *createMCMasmParser(SourceMgr &, MCContext &, MCStreamer &,
-                                const MCAsmInfo &, struct tm, unsigned CB = 0);
+                                const MCAsmInfo &, unsigned CB = 0);
 
 } // end namespace llvm
 

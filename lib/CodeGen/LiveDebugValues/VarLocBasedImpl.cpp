@@ -411,6 +411,8 @@ private:
       assert(MI.isDebugValue() && "not a DBG_VALUE");
       assert((MI.isDebugValueList() || MI.getNumOperands() == 4) &&
              "malformed DBG_VALUE");
+      if (Expr && Expr->isEntryValue())
+        EVKind = EntryValueLocKind::EntryValueKind;
       for (const MachineOperand &Op : MI.debug_operands()) {
         MachineLoc ML = GetLocForOp(Op);
         auto It = find(Locs, ML);
@@ -428,8 +430,7 @@ private:
 
       // We create the debug entry values from the factory functions rather
       // than from this ctor.
-      assert(EVKind != EntryValueLocKind::EntryValueKind &&
-             !isEntryBackupLoc());
+      assert(!isEntryBackupLoc());
     }
 
     static MachineLoc GetLocForOp(const MachineOperand &Op) {
@@ -2046,6 +2047,33 @@ void VarLocBasedLDV::recordEntryValue(const MachineInstr &MI,
   OpenRanges.insert(EntryValLocIDs, EntryValLocAsBackup);
 }
 
+static bool isSwiftAsyncContext(const MachineInstr &MI) {
+  const llvm::MachineFunction *MF = MI.getParent()->getParent();
+  const llvm::Function &F = MF->getFunction();
+  // FIXME: Missing patch.
+  //if (F.getCallingConv() != CallingConv::SwiftTail)
+  //  return false;
+  for (const MachineOperand &Op : MI.debug_operands()) {
+    if (!Op.isReg())
+      return false;
+    bool found = false;
+    unsigned Reg = Op.getReg();
+    unsigned I = 0;
+    if (MF->getProperties().hasProperty(
+            MachineFunctionProperties::Property::TracksLiveness))
+      for (auto R : MF->getRegInfo().liveins()) {
+        if (R.first == Reg && F.hasParamAttribute(I, Attribute::SwiftAsync)) {
+          found = true;
+          break;
+        }
+        ++I;
+      }
+    if (!found)
+      return false;
+  }
+  return true;
+}
+
 /// Calculate the liveness information for the given machine function and
 /// extend ranges across basic blocks.
 bool VarLocBasedLDV::ExtendRanges(MachineFunction &MF, TargetPassConfig *TPC) {
@@ -2101,11 +2129,27 @@ bool VarLocBasedLDV::ExtendRanges(MachineFunction &MF, TargetPassConfig *TPC) {
 
   // Only in the case of entry MBB collect DBG_VALUEs representing
   // function parameters in order to generate debug entry values for them.
+  SmallVector<MachineInstr *, 8> AsyncDbgValues;
   MachineBasicBlock &First_MBB = *(MF.begin());
   for (auto &MI : First_MBB) {
     collectRegDefs(MI, DefinedRegs, TRI);
-    if (MI.isDebugValue())
-      recordEntryValue(MI, DefinedRegs, OpenRanges, VarLocIDs);
+    if (MI.isDebugValue()) {
+      // In Swift async functions entry values are preferred, since they
+      // can be evaluated in both live frames and virtual backtraces.
+      if (isSwiftAsyncContext(MI)) {
+        MI.getOperand(3).setMetadata(DIExpression::prepend(
+            MI.getDebugExpression(), DIExpression::EntryValue));
+        AsyncDbgValues.push_back(&MI);
+      } else
+        recordEntryValue(MI, DefinedRegs, OpenRanges, VarLocIDs);
+    }
+  }
+
+  if (AsyncDbgValues.size()) {
+    // Make sure the async entry values are at the very start.
+    auto InsertPt = First_MBB.getFirstNonDebugInstr();
+    for (auto *MI : llvm::reverse(AsyncDbgValues))
+      MI->moveBefore(&*InsertPt);
   }
 
   // Initialize per-block structures and scan for fragment overlaps.

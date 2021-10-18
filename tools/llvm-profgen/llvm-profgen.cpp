@@ -18,20 +18,16 @@
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/TargetSelect.h"
 
-static cl::OptionCategory ProfGenCategory("ProfGen Options");
-
 static cl::list<std::string> PerfTraceFilenames(
     "perfscript", cl::value_desc("perfscript"), cl::OneOrMore,
     llvm::cl::MiscFlags::CommaSeparated,
     cl::desc("Path of perf-script trace created by Linux perf tool with "
-             "`script` command(the raw perf.data should be profiled with -b)"),
-    cl::cat(ProfGenCategory));
+             "`script` command(the raw perf.data should be profiled with -b)"));
 
 static cl::list<std::string>
     BinaryFilenames("binary", cl::value_desc("binary"), cl::OneOrMore,
                     llvm::cl::MiscFlags::CommaSeparated,
-                    cl::desc("Path of profiled binary files"),
-                    cl::cat(ProfGenCategory));
+                    cl::desc("Path of profiled binary files"));
 
 extern cl::opt<bool> ShowDisassemblyOnly;
 
@@ -46,7 +42,6 @@ int main(int argc, const char *argv[]) {
   InitializeAllTargetMCs();
   InitializeAllDisassemblers();
 
-  cl::HideUnrelatedOptions({&ProfGenCategory, &getColorCategory()});
   cl::ParseCommandLineOptions(argc, argv, "llvm SPGO profile generator\n");
 
   // Load binaries and parse perf events and samples

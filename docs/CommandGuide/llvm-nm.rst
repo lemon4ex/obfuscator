@@ -130,7 +130,7 @@ OPTIONS
 
  Show all symbols, even those usually suppressed.
 
-.. option:: --defined-only
+.. option:: --defined-only, -U
 
  Print only symbols defined in this file.
 
@@ -157,7 +157,11 @@ OPTIONS
 
  Print a summary of command-line options and their meanings.
 
-.. option:: -j
+.. option:: --help-list
+
+ Print an uncategorized summary of command-line options and their meanings.
+
+.. option:: --just-symbol-name, -j
 
  Print just the symbol names. Alias for `--format=just-symbols``.
 
@@ -177,7 +181,7 @@ OPTIONS
 
  Show symbols in the order encountered.
 
-.. option:: --no-weak
+.. option:: --no-weak, -W
 
  Don't print weak symbols.
 
@@ -189,7 +193,7 @@ OPTIONS
 
  Use POSIX.2 output format.  Alias for ``--format=posix``.
 
-.. option:: --print-armap
+.. option:: --print-armap, -M
 
  Print the archive symbol table, in addition to the symbols.
 
@@ -231,6 +235,10 @@ OPTIONS
  Display the version of the :program:`llvm-nm` executable, then exit. Does not
  stack with other commands.
 
+.. option:: --without-aliases
+
+ Exclude aliases from the output.
+
 .. option:: @<FILE>
 
  Read command-line options from response file `<FILE>`.
@@ -259,7 +267,7 @@ MACH-O SPECIFIC OPTIONS
 
  Do not add any symbols from the dyldinfo.
 
-.. option:: -s <segment> <section>
+.. option:: -s=<segment section>
 
  Dump only symbols from this segment and section name.
 

@@ -714,10 +714,10 @@ static bool tryEmitARCCopyWeakInit(CodeGenFunction &CGF,
       }
 
       // If it was an l-value, use objc_copyWeak.
-      if (srcExpr->isLValue()) {
+      if (srcExpr->getValueKind() == VK_LValue) {
         CGF.EmitARCCopyWeak(destLV.getAddress(CGF), srcAddr);
       } else {
-        assert(srcExpr->isXValue());
+        assert(srcExpr->getValueKind() == VK_XValue);
         CGF.EmitARCMoveWeak(destLV.getAddress(CGF), srcAddr);
       }
       return true;
@@ -764,7 +764,13 @@ void CodeGenFunction::EmitScalarInit(const Expr *init, const ValueDecl *D,
                                      LValue lvalue, bool capturedByInit) {
   Qualifiers::ObjCLifetime lifetime = lvalue.getObjCLifetime();
   if (!lifetime) {
-    llvm::Value *value = EmitScalarExpr(init);
+    llvm::Value *value;
+    if (auto ptrauth = lvalue.getQuals().getPointerAuth()) {
+      value = EmitPointerAuthQualify(ptrauth, init, lvalue.getAddress(*this));
+      lvalue.getQuals().removePtrAuth();
+    } else {
+      value = EmitScalarExpr(init);
+    }
     if (capturedByInit)
       drillIntoBlockVariable(*this, lvalue, cast<VarDecl>(D));
     EmitNullabilityCheck(lvalue, value, init->getExprLoc());
@@ -2246,9 +2252,8 @@ void CodeGenFunction::emitArrayDestroy(llvm::Value *begin,
 
   // Shift the address back by one element.
   llvm::Value *negativeOne = llvm::ConstantInt::get(SizeTy, -1, true);
-  llvm::Value *element = Builder.CreateInBoundsGEP(
-      elementPast->getType()->getPointerElementType(), elementPast, negativeOne,
-      "arraydestroy.element");
+  llvm::Value *element = Builder.CreateInBoundsGEP(elementPast, negativeOne,
+                                                   "arraydestroy.element");
 
   if (useEHCleanup)
     pushRegularPartialArrayCleanup(begin, element, elementType, elementAlign,
@@ -2288,11 +2293,8 @@ static void emitPartialArrayDestroy(CodeGenFunction &CGF,
     llvm::Value *zero = llvm::ConstantInt::get(CGF.SizeTy, 0);
 
     SmallVector<llvm::Value*,4> gepIndices(arrayDepth+1, zero);
-    llvm::Type *elemTy = begin->getType()->getPointerElementType();
-    begin = CGF.Builder.CreateInBoundsGEP(
-        elemTy, begin, gepIndices, "pad.arraybegin");
-    end = CGF.Builder.CreateInBoundsGEP(
-        elemTy, end, gepIndices, "pad.arrayend");
+    begin = CGF.Builder.CreateInBoundsGEP(begin, gepIndices, "pad.arraybegin");
+    end = CGF.Builder.CreateInBoundsGEP(end, gepIndices, "pad.arrayend");
   }
 
   // Destroy the array.  We don't ever need an EH cleanup because we

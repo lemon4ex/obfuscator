@@ -635,7 +635,7 @@ static void distributeFunctionTypeAttrFromDeclSpec(TypeProcessingState &state,
   // C++11 attributes before the decl specifiers actually appertain to
   // the declarators. Move them straight there. We don't support the
   // 'put them wherever you like' semantics we allow for GNU attributes.
-  if (attr.isStandardAttributeSyntax()) {
+  if (attr.isCXX11Attribute()) {
     moveAttrFromListToList(attr, state.getCurrentAttributes(),
                            state.getDeclarator().getAttributes());
     return;
@@ -688,9 +688,9 @@ static void distributeTypeAttrsFromDeclarator(TypeProcessingState &state,
   // non-owning copy and iterate over that.
   ParsedAttributesView AttrsCopy{state.getDeclarator().getAttributes()};
   for (ParsedAttr &attr : AttrsCopy) {
-    // Do not distribute [[]] attributes. They have strict rules for what
+    // Do not distribute C++11 attributes. They have strict rules for what
     // they appertain to.
-    if (attr.isStandardAttributeSyntax())
+    if (attr.isCXX11Attribute())
       continue;
 
     switch (attr.getKind()) {
@@ -1198,20 +1198,6 @@ TypeResult Sema::actOnObjCTypeArgsAndProtocolQualifiers(
     ResultTL = ObjCObjectPointerTL.getPointeeLoc();
   }
 
-  if (auto OTPTL = ResultTL.getAs<ObjCTypeParamTypeLoc>()) {
-    // Protocol qualifier information.
-    if (OTPTL.getNumProtocols() > 0) {
-      assert(OTPTL.getNumProtocols() == Protocols.size());
-      OTPTL.setProtocolLAngleLoc(ProtocolLAngleLoc);
-      OTPTL.setProtocolRAngleLoc(ProtocolRAngleLoc);
-      for (unsigned i = 0, n = Protocols.size(); i != n; ++i)
-        OTPTL.setProtocolLoc(i, ProtocolLocs[i]);
-    }
-
-    // We're done. Return the completed type to the parser.
-    return CreateParsedType(Result, ResultTInfo);
-  }
-
   auto ObjCObjectTL = ResultTL.castAs<ObjCObjectTypeLoc>();
 
   // Type argument information.
@@ -1525,20 +1511,18 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
     break;
   case DeclSpec::TST_float:   Result = Context.FloatTy; break;
   case DeclSpec::TST_double:
+    if (S.getLangOpts().OpenCL) {
+      if (!S.getOpenCLOptions().isSupported("cl_khr_fp64", S.getLangOpts()))
+        S.Diag(DS.getTypeSpecTypeLoc(),
+               diag::err_opencl_double_requires_extension)
+            << (S.getLangOpts().OpenCLVersion >= 300);
+      else if (!S.getOpenCLOptions().isAvailableOption("cl_khr_fp64", S.getLangOpts()))
+        S.Diag(DS.getTypeSpecTypeLoc(), diag::ext_opencl_double_without_pragma);
+    }
     if (DS.getTypeSpecWidth() == TypeSpecifierWidth::Long)
       Result = Context.LongDoubleTy;
     else
       Result = Context.DoubleTy;
-    if (S.getLangOpts().OpenCL) {
-      if (!S.getOpenCLOptions().isSupported("cl_khr_fp64", S.getLangOpts()))
-        S.Diag(DS.getTypeSpecTypeLoc(), diag::err_opencl_requires_extension)
-            << 0 << Result
-            << (S.getLangOpts().OpenCLVersion == 300
-                    ? "cl_khr_fp64 and __opencl_c_fp64"
-                    : "cl_khr_fp64");
-      else if (!S.getOpenCLOptions().isAvailableOption("cl_khr_fp64", S.getLangOpts()))
-        S.Diag(DS.getTypeSpecTypeLoc(), diag::ext_opencl_double_without_pragma);
-    }
     break;
   case DeclSpec::TST_float128:
     if (!S.Context.getTargetInfo().hasFloat128Type() &&
@@ -1726,28 +1710,21 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
 
   if (S.getLangOpts().OpenCL) {
     const auto &OpenCLOptions = S.getOpenCLOptions();
-    bool IsOpenCLC30 = (S.getLangOpts().OpenCLVersion == 300);
+    StringRef OptName;
     // OpenCL C v3.0 s6.3.3 - OpenCL image types require __opencl_c_images
-    // support.
-    // OpenCL C v3.0 s6.2.1 - OpenCL 3d image write types requires support
-    // for OpenCL C 2.0, or OpenCL C 3.0 or newer and the
-    // __opencl_c_3d_image_writes feature. OpenCL C v3.0 API s4.2 - For devices
-    // that support OpenCL 3.0, cl_khr_3d_image_writes must be returned when and
-    // only when the optional feature is supported
+    // support
     if ((Result->isImageType() || Result->isSamplerT()) &&
-        (IsOpenCLC30 &&
-         !OpenCLOptions.isSupported("__opencl_c_images", S.getLangOpts()))) {
+        (S.getLangOpts().OpenCLVersion >= 300 &&
+         !OpenCLOptions.isSupported("__opencl_c_images", S.getLangOpts())))
+      OptName = "__opencl_c_images";
+    else if (Result->isOCLImage3dWOType() &&
+             !OpenCLOptions.isSupported("cl_khr_3d_image_writes",
+                                        S.getLangOpts()))
+      OptName = "cl_khr_3d_image_writes";
+
+    if (!OptName.empty()) {
       S.Diag(DS.getTypeSpecTypeLoc(), diag::err_opencl_requires_extension)
-          << 0 << Result << "__opencl_c_images";
-      declarator.setInvalidType();
-    } else if (Result->isOCLImage3dWOType() &&
-               !OpenCLOptions.isSupported("cl_khr_3d_image_writes",
-                                          S.getLangOpts())) {
-      S.Diag(DS.getTypeSpecTypeLoc(), diag::err_opencl_requires_extension)
-          << 0 << Result
-          << (IsOpenCLC30
-                  ? "cl_khr_3d_image_writes and __opencl_c_3d_image_writes"
-                  : "cl_khr_3d_image_writes");
+          << 0 << Result << OptName;
       declarator.setInvalidType();
     }
   }
@@ -2769,6 +2746,12 @@ bool Sema::CheckFunctionReturnType(QualType T, SourceLocation Loc) {
     return true;
   }
 
+  // __ptrauth is illegal on a function return type.
+  if (T.getPointerAuth()) {
+    Diag(Loc, diag::err_ptrauth_qualifier_return) << T;
+    return true;
+  }
+
   if (T.hasNonTrivialToPrimitiveDestructCUnion() ||
       T.hasNonTrivialToPrimitiveCopyCUnion())
     checkNonTrivialCUnion(T, Loc, NTCUC_FunctionReturn,
@@ -2865,6 +2848,10 @@ QualType Sema::BuildFunctionType(QualType T,
       // Disallow half FP arguments.
       Diag(Loc, diag::err_parameters_retval_cannot_have_fp16_type) << 0 <<
         FixItHint::CreateInsertion(Loc, "*");
+      Invalid = true;
+    } else if (ParamType.getPointerAuth()) {
+      // __ptrauth is illegal on a function return type.
+      Diag(Loc, diag::err_ptrauth_qualifier_param) << T;
       Invalid = true;
     }
 
@@ -5076,6 +5063,11 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
         }
       }
 
+      // __ptrauth is illegal on a function return type.
+      if (T.getPointerAuth()) {
+        S.Diag(DeclType.Loc, diag::err_ptrauth_qualifier_return) << T;
+      }
+
       if (LangOpts.OpenCL) {
         // OpenCL v2.0 s6.12.5 - A block cannot be the return value of a
         // function.
@@ -7081,6 +7073,25 @@ static bool handleMSPointerTypeQualifierAttr(TypeProcessingState &State,
   return false;
 }
 
+/// Rebuild an attributed type without the nullability attribute on it.
+static QualType rebuildAttributedTypeWithoutNullability(ASTContext &ctx,
+                                                        QualType type) {
+  auto attributed = dyn_cast<AttributedType>(type.getTypePtr());
+  if (!attributed) return type;
+
+  // Skip the nullability attribute; we're done.
+  if (attributed->getImmediateNullability()) {
+    return attributed->getModifiedType();
+  }
+
+  // Build the modified type.
+  auto modified = rebuildAttributedTypeWithoutNullability(
+                    ctx, attributed->getModifiedType());
+  assert(modified.getTypePtr() != attributed->getModifiedType().getTypePtr());
+  return ctx.getAttributedType(attributed->getAttrKind(), modified,
+                                   attributed->getEquivalentType());
+}
+
 /// Map a nullability attribute kind to a nullability kind.
 static NullabilityKind mapNullabilityAttrKind(ParsedAttr::Kind kind) {
   switch (kind) {
@@ -7101,30 +7112,18 @@ static NullabilityKind mapNullabilityAttrKind(ParsedAttr::Kind kind) {
   }
 }
 
-/// Applies a nullability type specifier to the given type, if possible.
-///
-/// \param state The type processing state.
-///
-/// \param type The type to which the nullability specifier will be
-/// added. On success, this type will be updated appropriately.
-///
-/// \param attr The attribute as written on the type.
-///
-/// \param allowOnArrayType Whether to accept nullability specifiers on an
-/// array type (e.g., because it will decay to a pointer).
-///
-/// \returns true if a problem has been diagnosed, false on success.
-static bool checkNullabilityTypeSpecifier(TypeProcessingState &state,
+static bool checkNullabilityTypeSpecifier(Sema &S,
+                                          TypeProcessingState *state,
+                                          ParsedAttr *parsedAttr,
                                           QualType &type,
-                                          ParsedAttr &attr,
-                                          bool allowOnArrayType) {
-  Sema &S = state.getSema();
-
-  NullabilityKind nullability = mapNullabilityAttrKind(attr.getKind());
-  SourceLocation nullabilityLoc = attr.getLoc();
-  bool isContextSensitive = attr.isContextSensitiveKeywordAttribute();
-
-  recordNullabilitySeen(S, nullabilityLoc);
+                                          NullabilityKind nullability,
+                                          SourceLocation nullabilityLoc,
+                                          bool isContextSensitive,
+                                          bool allowOnArrayType,
+                                          bool overrideExisting) {
+  bool implicit = (state == nullptr);
+  if (!implicit)
+    recordNullabilitySeen(S, nullabilityLoc);
 
   // Check for existing nullability attributes on the type.
   QualType desugared = type;
@@ -7133,6 +7132,9 @@ static bool checkNullabilityTypeSpecifier(TypeProcessingState &state,
     if (auto existingNullability = attributed->getImmediateNullability()) {
       // Duplicated nullability.
       if (nullability == *existingNullability) {
+        if (implicit)
+          break;
+
         S.Diag(nullabilityLoc, diag::warn_nullability_duplicate)
           << DiagNullabilityKind(nullability, isContextSensitive)
           << FixItHint::CreateRemoval(nullabilityLoc);
@@ -7140,11 +7142,16 @@ static bool checkNullabilityTypeSpecifier(TypeProcessingState &state,
         break;
       }
 
-      // Conflicting nullability.
-      S.Diag(nullabilityLoc, diag::err_nullability_conflicting)
-        << DiagNullabilityKind(nullability, isContextSensitive)
-        << DiagNullabilityKind(*existingNullability, false);
-      return true;
+      if (!overrideExisting) {
+        // Conflicting nullability.
+        S.Diag(nullabilityLoc, diag::err_nullability_conflicting)
+          << DiagNullabilityKind(nullability, isContextSensitive)
+          << DiagNullabilityKind(*existingNullability, false);
+        return true;
+      }
+
+      // Rebuild the attributed type, dropping the existing nullability.
+      type = rebuildAttributedTypeWithoutNullability(S.Context, type);
     }
 
     desugared = attributed->getModifiedType();
@@ -7155,7 +7162,7 @@ static bool checkNullabilityTypeSpecifier(TypeProcessingState &state,
   // have nullability specifiers on them, which means we cannot
   // provide a useful Fix-It.
   if (auto existingNullability = desugared->getNullability(S.Context)) {
-    if (nullability != *existingNullability) {
+    if (nullability != *existingNullability && !implicit) {
       S.Diag(nullabilityLoc, diag::err_nullability_conflicting)
         << DiagNullabilityKind(nullability, isContextSensitive)
         << DiagNullabilityKind(*existingNullability, false);
@@ -7180,8 +7187,10 @@ static bool checkNullabilityTypeSpecifier(TypeProcessingState &state,
   // If this definitely isn't a pointer type, reject the specifier.
   if (!desugared->canHaveNullability() &&
       !(allowOnArrayType && desugared->isArrayType())) {
-    S.Diag(nullabilityLoc, diag::err_nullability_nonpointer)
-      << DiagNullabilityKind(nullability, isContextSensitive) << type;
+    if (!implicit) {
+      S.Diag(nullabilityLoc, diag::err_nullability_nonpointer)
+        << DiagNullabilityKind(nullability, isContextSensitive) << type;
+    }
     return true;
   }
 
@@ -7211,9 +7220,40 @@ static bool checkNullabilityTypeSpecifier(TypeProcessingState &state,
   }
 
   // Form the attributed type.
-  type = state.getAttributedType(
-      createNullabilityAttr(S.Context, attr, nullability), type, type);
+  if (state) {
+    assert(parsedAttr);
+    Attr *A = createNullabilityAttr(S.Context, *parsedAttr, nullability);
+    type = state->getAttributedType(A, type, type);
+  } else {
+    attr::Kind attrKind = AttributedType::getNullabilityAttrKind(nullability);
+    type = S.Context.getAttributedType(attrKind, type, type);
+  }
   return false;
+}
+
+static bool checkNullabilityTypeSpecifier(TypeProcessingState &state,
+                                          QualType &type,
+                                          ParsedAttr &attr,
+                                          bool allowOnArrayType) {
+  NullabilityKind nullability = mapNullabilityAttrKind(attr.getKind());
+  SourceLocation nullabilityLoc = attr.getLoc();
+  bool isContextSensitive = attr.isContextSensitiveKeywordAttribute();
+
+  return checkNullabilityTypeSpecifier(state.getSema(), &state, &attr, type,
+                                       nullability, nullabilityLoc,
+                                       isContextSensitive, allowOnArrayType,
+                                       /*overrideExisting*/false);
+}
+
+bool Sema::checkImplicitNullabilityTypeSpecifier(QualType &type,
+                                                 NullabilityKind nullability,
+                                                 SourceLocation diagLoc,
+                                                 bool allowArrayTypes,
+                                                 bool overrideExisting) {
+  return checkNullabilityTypeSpecifier(*this, nullptr, nullptr, type,
+                                       nullability, diagLoc,
+                                       /*isContextSensitive*/false,
+                                       allowArrayTypes, overrideExisting);
 }
 
 /// Check the application of the Objective-C '__kindof' qualifier to
@@ -7229,7 +7269,6 @@ static bool checkObjCKindOfType(TypeProcessingState &state, QualType &type,
     return false;
   }
 
-  // Find out if it's an Objective-C object or object pointer type;
   const ObjCObjectPointerType *ptrType = type->getAs<ObjCObjectPointerType>();
   const ObjCObjectType *objType = ptrType ? ptrType->getObjectType()
                                           : type->getAs<ObjCObjectType>();
@@ -7872,6 +7911,90 @@ static void HandleNeonVectorTypeAttr(QualType &CurType, const ParsedAttr &Attr,
   CurType = S.Context.getVectorType(CurType, numElts, VecKind);
 }
 
+/// Handle the __ptrauth qualifier.
+static void HandlePtrAuthQualifier(QualType &type, const ParsedAttr &attr,
+                                   Sema &S) {
+  if (attr.getNumArgs() < 1 || attr.getNumArgs() > 3) {
+    S.Diag(attr.getLoc(), diag::err_ptrauth_qualifier_bad_arg_count);
+    attr.setInvalid();
+    return;
+  }
+
+  Expr *keyArg =
+    attr.getArgAsExpr(0);
+  Expr *isAddressDiscriminatedArg =
+    attr.getNumArgs() >= 2 ? attr.getArgAsExpr(1) : nullptr;
+  Expr *extraDiscriminatorArg =
+    attr.getNumArgs() >= 3 ? attr.getArgAsExpr(2) : nullptr;
+
+  unsigned key;
+  if (S.checkConstantPointerAuthKey(keyArg, key)) {
+    attr.setInvalid();
+    return;
+  }
+  assert(key <= PointerAuthQualifier::MaxKey && "ptrauth key is out of range");
+
+  bool isInvalid = false;
+  auto checkArg = [&](Expr *arg, unsigned argIndex) -> unsigned {
+    if (!arg) return 0;
+
+    Optional<llvm::APSInt> result = arg->getIntegerConstantExpr(S.Context);
+    if (!result) {
+      isInvalid = true;
+      S.Diag(arg->getExprLoc(), diag::err_ptrauth_qualifier_arg_not_ice);
+      return 0;
+    }
+
+    unsigned max =
+      (argIndex == 1 ? 1 : PointerAuthQualifier::MaxDiscriminator);
+    if (*result < 0 || *result > max) {
+      llvm::SmallString<32> value; {
+        llvm::raw_svector_ostream str(value);
+        str << *result;
+      }
+
+      if (argIndex == 1) {
+        S.Diag(arg->getExprLoc(),
+               diag::err_ptrauth_qualifier_address_discrimination_invalid)
+          << value;
+      } else {
+        S.Diag(arg->getExprLoc(),
+               diag::err_ptrauth_qualifier_extra_discriminator_invalid)
+          << value << max;
+      }
+      isInvalid = true;
+    }
+    return result->getZExtValue();
+  };
+  bool isAddressDiscriminated = checkArg(isAddressDiscriminatedArg, 1);
+  unsigned extraDiscriminator = checkArg(extraDiscriminatorArg, 2);
+  if (isInvalid) {
+    attr.setInvalid();
+    return;
+  }
+
+  if (!type->isPointerType()) {
+    S.Diag(attr.getLoc(), diag::err_ptrauth_qualifier_nonpointer) << type;
+    attr.setInvalid();
+    return;
+  }
+
+  if (type.getPointerAuth()) {
+    S.Diag(attr.getLoc(), diag::err_ptrauth_qualifier_redundant) << type;
+    attr.setInvalid();
+    return;
+  }
+
+  if (!S.getLangOpts().PointerAuthIntrinsics) {
+    S.diagnosePointerAuthDisabled(attr.getLoc(), attr.getRange());
+    attr.setInvalid();
+    return;
+  }
+
+  PointerAuthQualifier qual(key, isAddressDiscriminated, extraDiscriminator);
+  type = S.Context.getPointerAuthType(type, qual);
+}
+
 /// HandleArmSveVectorBitsTypeAttr - The "arm_sve_vector_bits" attribute is
 /// used to create fixed-length versions of sizeless SVE types defined by
 /// the ACLE, such as svint32_t and svbool_t.
@@ -8075,7 +8198,7 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
     if (attr.isInvalid())
       continue;
 
-    if (attr.isStandardAttributeSyntax()) {
+    if (attr.isCXX11Attribute()) {
       // [[gnu::...]] attributes are treated as declaration attributes, so may
       // not appertain to a DeclaratorChunk. If we handle them as type
       // attributes, accept them in that position and diagnose the GCC
@@ -8104,8 +8227,8 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
     // otherwise, add it to the FnAttrs list for rechaining.
     switch (attr.getKind()) {
     default:
-      // A [[]] attribute on a declarator chunk must appertain to a type.
-      if (attr.isStandardAttributeSyntax() && TAL == TAL_DeclChunk) {
+      // A C++11 attribute on a declarator chunk must appertain to a type.
+      if (attr.isCXX11Attribute() && TAL == TAL_DeclChunk) {
         state.getSema().Diag(attr.getLoc(), diag::err_attribute_not_type_attr)
             << attr;
         attr.setUsedAsTypeAttr();
@@ -8113,7 +8236,7 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
       break;
 
     case ParsedAttr::UnknownAttribute:
-      if (attr.isStandardAttributeSyntax() && TAL == TAL_DeclChunk)
+      if (attr.isCXX11Attribute() && TAL == TAL_DeclChunk)
         state.getSema().Diag(attr.getLoc(),
                              diag::warn_unknown_attribute_ignored)
             << attr << attr.getRange();
@@ -8172,6 +8295,10 @@ static void processTypeAttrs(TypeProcessingState &state, QualType &type,
     }
     case ParsedAttr::AT_OpenCLAccess:
       HandleOpenCLAccessAttr(type, attr, state.getSema());
+      attr.setUsedAsTypeAttr();
+      break;
+    case ParsedAttr::AT_PointerAuth:
+      HandlePtrAuthQualifier(type, attr, state.getSema());
       attr.setUsedAsTypeAttr();
       break;
     case ParsedAttr::AT_LifetimeBound:

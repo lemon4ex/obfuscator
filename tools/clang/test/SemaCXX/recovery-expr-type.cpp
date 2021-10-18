@@ -139,7 +139,6 @@ void baz() {
 
 namespace test12 {
 // Verify we do not crash.
-int fun(int *foo = no_such_function()); // expected-error {{undeclared identifier}}
-void crash1() { fun(); }
-void crash2() { constexpr int s = fun(); }
+void fun(int *foo = no_such_function()); // expected-error {{undeclared identifier}}
+void baz() { fun(); }
 } // namespace test12

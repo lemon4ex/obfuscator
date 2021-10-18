@@ -164,7 +164,7 @@ void test_ignored() {
 // CHECK-NEXT:    ret void
 
 void test_cast_to_void() {
-  (void) makeA();
+  (void)makeA();
 }
 // CHECK-LABEL: define{{.*}} void @test_cast_to_void()
 // CHECK:         [[T0:%.*]] = call [[A]]* @makeA() [ "clang.arc.attachedcall"(i64 1) ]

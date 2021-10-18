@@ -159,7 +159,6 @@ protected:
   static bool isAltEntry(const NormalizedSymbol &NSym);
 
   static bool isDebugSection(const NormalizedSection &NSec);
-  static bool isZeroFillSection(const NormalizedSection &NSec);
 
   MachO::relocation_info
   getRelocationInfo(const object::relocation_iterator RelItr) {

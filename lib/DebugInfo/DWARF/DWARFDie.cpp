@@ -69,43 +69,39 @@ static void dumpRanges(const DWARFObject &Obj, raw_ostream &OS,
   }
 }
 
-static void dumpLocationList(raw_ostream &OS, const DWARFFormValue &FormValue,
-                             DWARFUnit *U, unsigned Indent,
-                             DIDumpOptions DumpOpts) {
-  assert(FormValue.isFormClass(DWARFFormValue::FC_SectionOffset) &&
-         "bad FORM for location list");
+static void dumpLocation(raw_ostream &OS, const DWARFFormValue &FormValue,
+                         DWARFUnit *U, unsigned Indent,
+                         DIDumpOptions DumpOpts) {
   DWARFContext &Ctx = U->getContext();
   const MCRegisterInfo *MRI = Ctx.getRegisterInfo();
-  uint64_t Offset = *FormValue.getAsSectionOffset();
-
-  if (FormValue.getForm() == DW_FORM_loclistx) {
-    FormValue.dump(OS, DumpOpts);
-
-    if (auto LoclistOffset = U->getLoclistOffset(Offset))
-      Offset = *LoclistOffset;
-    else
-      return;
+  if (FormValue.isFormClass(DWARFFormValue::FC_Block) ||
+      FormValue.isFormClass(DWARFFormValue::FC_Exprloc)) {
+    ArrayRef<uint8_t> Expr = *FormValue.getAsBlock();
+    DataExtractor Data(StringRef((const char *)Expr.data(), Expr.size()),
+                       Ctx.isLittleEndian(), 0);
+    DWARFExpression(Data, U->getAddressByteSize(), U->getFormParams().Format)
+        .print(OS, DumpOpts, MRI, U);
+    return;
   }
-  U->getLocationTable().dumpLocationList(&Offset, OS, U->getBaseAddress(), MRI,
-                                         Ctx.getDWARFObj(), U, DumpOpts,
-                                         Indent);
-  return;
-}
 
-static void dumpLocationExpr(raw_ostream &OS, const DWARFFormValue &FormValue,
-                             DWARFUnit *U, unsigned Indent,
-                             DIDumpOptions DumpOpts) {
-  assert((FormValue.isFormClass(DWARFFormValue::FC_Block) ||
-          FormValue.isFormClass(DWARFFormValue::FC_Exprloc)) &&
-         "bad FORM for location expression");
-  DWARFContext &Ctx = U->getContext();
-  const MCRegisterInfo *MRI = Ctx.getRegisterInfo();
-  ArrayRef<uint8_t> Expr = *FormValue.getAsBlock();
-  DataExtractor Data(StringRef((const char *)Expr.data(), Expr.size()),
-                     Ctx.isLittleEndian(), 0);
-  DWARFExpression(Data, U->getAddressByteSize(), U->getFormParams().Format)
-      .print(OS, DumpOpts, MRI, U);
-  return;
+  if (FormValue.isFormClass(DWARFFormValue::FC_SectionOffset)) {
+    uint64_t Offset = *FormValue.getAsSectionOffset();
+
+    if (FormValue.getForm() == DW_FORM_loclistx) {
+      FormValue.dump(OS, DumpOpts);
+
+      if (auto LoclistOffset = U->getLoclistOffset(Offset))
+        Offset = *LoclistOffset;
+      else
+        return;
+    }
+    U->getLocationTable().dumpLocationList(&Offset, OS, U->getBaseAddress(),
+                                           MRI, Ctx.getDWARFObj(), U, DumpOpts,
+                                           Indent);
+    return;
+  }
+
+  FormValue.dump(OS, DumpOpts);
 }
 
 /// Dump the name encoded in the type tag.
@@ -181,6 +177,7 @@ static void dumpTypeName(raw_ostream &OS, const DWARFDie &D) {
   case DW_TAG_reference_type:
   case DW_TAG_rvalue_reference_type:
   case DW_TAG_subroutine_type:
+  case DW_TAG_APPLE_ptrauth_type:
     break;
   default:
     dumpTypeTagName(OS, T);
@@ -228,6 +225,18 @@ static void dumpTypeName(raw_ostream &OS, const DWARFDie &D) {
   case DW_TAG_rvalue_reference_type:
     OS << "&&";
     break;
+  case DW_TAG_APPLE_ptrauth_type: {
+    auto getValOrNull = [&](dwarf::Attribute Attr) -> uint64_t {
+      if (auto Form = D.find(Attr))
+        return *Form->getAsUnsignedConstant();
+      return 0;
+    };
+    OS << "__ptrauth(" << getValOrNull(DW_AT_APPLE_ptrauth_key) << ", "
+       << getValOrNull(DW_AT_APPLE_ptrauth_address_discriminated) << ", 0x0"
+       << utohexstr(getValOrNull(DW_AT_APPLE_ptrauth_extra_discriminator), true)
+       << ")";
+    break;
+  }
   default:
     break;
   }
@@ -293,15 +302,9 @@ static void dumpAttribute(raw_ostream &OS, const DWARFDie &Die,
       else
         FormValue.dump(OS, DumpOpts);
     }
-  } else if (DWARFAttribute::mayHaveLocationList(Attr) &&
-             FormValue.isFormClass(DWARFFormValue::FC_SectionOffset))
-    dumpLocationList(OS, FormValue, U, sizeof(BaseIndent) + Indent + 4,
-                     DumpOpts);
-  else if (FormValue.isFormClass(DWARFFormValue::FC_Exprloc) ||
-           (DWARFAttribute::mayHaveLocationExpr(Attr) &&
-            FormValue.isFormClass(DWARFFormValue::FC_Block)))
-    dumpLocationExpr(OS, FormValue, U, sizeof(BaseIndent) + Indent + 4,
-                     DumpOpts);
+  } else if (Form == dwarf::Form::DW_FORM_exprloc ||
+             DWARFAttribute::mayHaveLocationDescription(Attr))
+    dumpLocation(OS, FormValue, U, sizeof(BaseIndent) + Indent + 4, DumpOpts);
   else
     FormValue.dump(OS, DumpOpts);
 
@@ -581,16 +584,11 @@ uint64_t DWARFDie::getDeclLine() const {
 
 std::string
 DWARFDie::getDeclFile(DILineInfoSpecifier::FileLineInfoKind Kind) const {
-  auto D = getAttributeValueAsReferencedDie(DW_AT_abstract_origin);
-  if (!D)
-    D = *this;
   std::string FileName;
-  if (auto DeclFile = toUnsigned(D.find(DW_AT_decl_file))) {
-    if (const auto *LineTable =
-            getDwarfUnit()->getContext().getLineTableForUnit(
-                D.getDwarfUnit()->getLinkedUnit()))
-      LineTable->getFileNameByIndex(
-          *DeclFile, D.getDwarfUnit()->getCompilationDir(), Kind, FileName);
+  if (auto DeclFile = toUnsigned(findRecursively(DW_AT_decl_file))) {
+    if (const auto *LT = U->getContext().getLineTableForUnit(U)) {
+      LT->getFileNameByIndex(*DeclFile, U->getCompilationDir(), Kind, FileName);
+    }
   }
   return FileName;
 }
@@ -754,29 +752,11 @@ DWARFDie::attribute_iterator &DWARFDie::attribute_iterator::operator++() {
   return *this;
 }
 
-bool DWARFAttribute::mayHaveLocationList(dwarf::Attribute Attr) {
-  switch(Attr) {
-  case DW_AT_location:
-  case DW_AT_string_length:
-  case DW_AT_return_addr:
-  case DW_AT_data_member_location:
-  case DW_AT_frame_base:
-  case DW_AT_static_link:
-  case DW_AT_segment:
-  case DW_AT_use_location:
-  case DW_AT_vtable_elem_location:
-    return true;
-  default:
-    return false;
-  }
-}
-
-bool DWARFAttribute::mayHaveLocationExpr(dwarf::Attribute Attr) {
+bool DWARFAttribute::mayHaveLocationDescription(dwarf::Attribute Attr) {
   switch (Attr) {
   // From the DWARF v5 specification.
   case DW_AT_location:
   case DW_AT_byte_size:
-  case DW_AT_bit_offset:
   case DW_AT_bit_size:
   case DW_AT_string_length:
   case DW_AT_lower_bound:
@@ -792,7 +772,6 @@ bool DWARFAttribute::mayHaveLocationExpr(dwarf::Attribute Attr) {
   case DW_AT_vtable_elem_location:
   case DW_AT_allocated:
   case DW_AT_associated:
-  case DW_AT_data_location:
   case DW_AT_byte_stride:
   case DW_AT_rank:
   case DW_AT_call_value:

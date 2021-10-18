@@ -201,7 +201,7 @@ ARMTTIImpl::instCombineIntrinsic(InstCombiner &IC, IntrinsicInst &II) const {
       Type *IntTy32 = Type::getInt32Ty(II.getContext());
       Metadata *M[] = {
           ConstantAsMetadata::get(ConstantInt::get(IntTy32, 0)),
-          ConstantAsMetadata::get(ConstantInt::get(IntTy32, 0x10000))};
+          ConstantAsMetadata::get(ConstantInt::get(IntTy32, 0xFFFF))};
       II.setMetadata(LLVMContext::MD_range, MDNode::get(II.getContext(), M));
       return &II;
     }
@@ -335,11 +335,6 @@ InstructionCost ARMTTIImpl::getIntImmCostInst(unsigned Opcode, unsigned Idx,
   if ((Opcode == Instruction::SDiv || Opcode == Instruction::UDiv ||
        Opcode == Instruction::SRem || Opcode == Instruction::URem) &&
       Idx == 1)
-    return 0;
-
-  // Leave any gep offsets for the CodeGenPrepare, which will do a better job at
-  // splitting any large offsets.
-  if (Opcode == Instruction::GetElementPtr && Idx != 0)
     return 0;
 
   if (Opcode == Instruction::And) {
@@ -1594,15 +1589,13 @@ InstructionCost ARMTTIImpl::getGatherScatterOpCost(
 
 InstructionCost
 ARMTTIImpl::getArithmeticReductionCost(unsigned Opcode, VectorType *ValTy,
-                                       Optional<FastMathFlags> FMF,
+                                       bool IsPairwiseForm,
                                        TTI::TargetCostKind CostKind) {
-  if (TTI::requiresOrderedReduction(FMF))
-    return BaseT::getArithmeticReductionCost(Opcode, ValTy, FMF, CostKind);
-
   EVT ValVT = TLI->getValueType(DL, ValTy);
   int ISD = TLI->InstructionOpcodeToISD(Opcode);
   if (!ST->hasMVEIntegerOps() || !ValVT.isSimple() || ISD != ISD::ADD)
-    return BaseT::getArithmeticReductionCost(Opcode, ValTy, FMF, CostKind);
+    return BaseT::getArithmeticReductionCost(Opcode, ValTy, IsPairwiseForm,
+                                             CostKind);
 
   std::pair<InstructionCost, MVT> LT = TLI->getTypeLegalizationCost(DL, ValTy);
 
@@ -1614,7 +1607,8 @@ ARMTTIImpl::getArithmeticReductionCost(unsigned Opcode, VectorType *ValTy,
   if (const auto *Entry = CostTableLookup(CostTblAdd, ISD, LT.second))
     return Entry->Cost * ST->getMVEVectorCostFactor(CostKind) * LT.first;
 
-  return BaseT::getArithmeticReductionCost(Opcode, ValTy, FMF, CostKind);
+  return BaseT::getArithmeticReductionCost(Opcode, ValTy, IsPairwiseForm,
+                                           CostKind);
 }
 
 InstructionCost

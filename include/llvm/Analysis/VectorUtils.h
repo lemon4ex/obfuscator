@@ -31,7 +31,7 @@ enum class VFParamKind {
   OMP_LinearPos,     // declare simd linear(i:c) uniform(c)
   OMP_LinearValPos,  // declare simd linear(val(i:c)) uniform(c)
   OMP_LinearRefPos,  // declare simd linear(ref(i:c)) uniform(c)
-  OMP_LinearUValPos, // declare simd linear(uval(i:c)) uniform(c)
+  OMP_LinearUValPos, // declare simd linear(uval(i:c)) uniform(c
   OMP_Uniform,       // declare simd uniform(i)
   GlobalPredicate,   // Global logical predicate that acts on all lanes
                      // of the input and output mask concurrently. For
@@ -80,11 +80,13 @@ struct VFParameter {
 /// represent vector functions. in particular, it is not attached to
 /// any target-specific ABI.
 struct VFShape {
-  ElementCount VF;                        // Vectorization factor.
+  unsigned VF;     // Vectorization factor.
+  bool IsScalable; // True if the function is a scalable function.
   SmallVector<VFParameter, 8> Parameters; // List of parameter information.
   // Comparison operator.
   bool operator==(const VFShape &Other) const {
-    return std::tie(VF, Parameters) == std::tie(Other.VF, Other.Parameters);
+    return std::tie(VF, IsScalable, Parameters) ==
+           std::tie(Other.VF, Other.IsScalable, Other.Parameters);
   }
 
   /// Update the parameter in position P.ParamPos to P.
@@ -113,7 +115,7 @@ struct VFShape {
       Parameters.push_back(
           VFParameter({CI.arg_size(), VFParamKind::GlobalPredicate}));
 
-    return {EC, Parameters};
+    return {EC.getKnownMinValue(), EC.isScalable(), Parameters};
   }
   /// Sanity check on the Parameters in the VFShape.
   bool hasValidParameterList() const;

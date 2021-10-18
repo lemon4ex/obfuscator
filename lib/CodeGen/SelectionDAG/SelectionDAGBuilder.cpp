@@ -71,6 +71,8 @@
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/IR/GlobalPtrAuthInfo.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instructions.h"
@@ -1521,8 +1523,20 @@ SDValue SelectionDAGBuilder::getValueImpl(const Value *V) {
     if (const ConstantInt *CI = dyn_cast<ConstantInt>(C))
       return DAG.getConstant(*CI, getCurSDLoc(), VT);
 
-    if (const GlobalValue *GV = dyn_cast<GlobalValue>(C))
+    if (const GlobalValue *GV = dyn_cast<GlobalValue>(C)) {
+      if (const GlobalVariable *GVB = dyn_cast<GlobalVariable>(GV)) {
+        if (GVB->getSection() == "llvm.ptrauth") {
+          auto PAI = GlobalPtrAuthInfo::analyze(GVB);
+          return DAG.getNode(ISD::PtrAuthGlobalAddress, getCurSDLoc(), VT,
+                             DAG.getGlobalAddress(GV, getCurSDLoc(), VT),
+                             getValue(PAI->getPointer()),
+                             getValue(PAI->getKey()),
+                             getValue(PAI->getAddrDiscriminator()),
+                             getValue(PAI->getDiscriminator()));
+        }
+      }
       return DAG.getGlobalAddress(GV, getCurSDLoc(), VT);
+    }
 
     if (isa<ConstantPointerNull>(C)) {
       unsigned AS = V->getType()->getPointerAddressSpace();
@@ -2871,12 +2885,12 @@ void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
   MachineBasicBlock *Return = FuncInfo.MBBMap[I.getSuccessor(0)];
   const BasicBlock *EHPadBB = I.getSuccessor(1);
 
-  // Deopt bundles are lowered in LowerCallSiteWithDeoptBundle, and we don't
+  // Deopt and ptrauth bundles are lowered in helper functions, and we don't
   // have to do anything here to lower funclet bundles.
   assert(!I.hasOperandBundlesOtherThan(
              {LLVMContext::OB_deopt, LLVMContext::OB_gc_transition,
               LLVMContext::OB_gc_live, LLVMContext::OB_funclet,
-              LLVMContext::OB_cfguardtarget,
+              LLVMContext::OB_cfguardtarget, LLVMContext::OB_ptrauth,
               LLVMContext::OB_clang_arc_attachedcall}) &&
          "Cannot lower invokes with arbitrary operand bundles yet!");
 
@@ -2923,6 +2937,8 @@ void SelectionDAGBuilder::visitInvoke(const InvokeInst &I) {
     // intrinsic, and right now there are no plans to support other intrinsics
     // with deopt state.
     LowerCallSiteWithDeoptBundle(&I, getValue(Callee), EHPadBB);
+  } else if (I.countOperandBundlesOfType(LLVMContext::OB_ptrauth)) {
+    LowerCallSiteWithPtrAuthBundle(cast<CallBase>(I), EHPadBB);
   } else {
     LowerCallTo(I, getValue(Callee), false, false, EHPadBB);
   }
@@ -4368,7 +4384,7 @@ static bool getUniformBase(const Value *Ptr, SDValue &Base, SDValue &Index,
 
     Base = SDB->getValue(C);
 
-    ElementCount NumElts = cast<VectorType>(Ptr->getType())->getElementCount();
+    unsigned NumElts = cast<FixedVectorType>(Ptr->getType())->getNumElements();
     EVT VT = EVT::getVectorVT(*DAG.getContext(), TLI.getPointerTy(DL), NumElts);
     Index = DAG.getConstant(0, SDB->getCurSDLoc(), VT);
     IndexType = ISD::SIGNED_SCALED;
@@ -4409,7 +4425,7 @@ void SelectionDAGBuilder::visitMaskedScatter(const CallInst &I) {
   EVT VT = Src0.getValueType();
   Align Alignment = cast<ConstantInt>(I.getArgOperand(2))
                         ->getMaybeAlignValue()
-                        .getValueOr(DAG.getEVTAlign(VT.getScalarType()));
+                        .getValueOr(DAG.getEVTAlign(VT));
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
 
   AAMDNodes AAInfo;
@@ -4527,7 +4543,7 @@ void SelectionDAGBuilder::visitMaskedGather(const CallInst &I) {
   EVT VT = TLI.getValueType(DAG.getDataLayout(), I.getType());
   Align Alignment = cast<ConstantInt>(I.getArgOperand(1))
                         ->getMaybeAlignValue()
-                        .getValueOr(DAG.getEVTAlign(VT.getScalarType()));
+                        .getValueOr(DAG.getEVTAlign(VT));
 
   AAMDNodes AAInfo;
   I.getAAMetadata(AAInfo);
@@ -5503,35 +5519,6 @@ bool SelectionDAGBuilder::EmitFuncArgumentDbgValue(
   if (!Arg)
     return false;
 
-  MachineFunction &MF = DAG.getMachineFunction();
-  const TargetInstrInfo *TII = DAG.getSubtarget().getInstrInfo();
-
-  // Helper to create DBG_INSTR_REFs or DBG_VALUEs, depending on what kind
-  // we've been asked to pursue.
-  auto MakeVRegDbgValue = [&](Register Reg, DIExpression *FragExpr,
-                              bool Indirect) {
-    if (Reg.isVirtual() && TM.Options.ValueTrackingVariableLocations) {
-      // For VRegs, in instruction referencing mode, create a DBG_INSTR_REF
-      // pointing at the VReg, which will be patched up later.
-      auto &Inst = TII->get(TargetOpcode::DBG_INSTR_REF);
-      auto MIB = BuildMI(MF, DL, Inst);
-      MIB.addReg(Reg, RegState::Debug);
-      MIB.addImm(0);
-      MIB.addMetadata(Variable);
-      auto *NewDIExpr = FragExpr;
-      // We don't have an "Indirect" field in DBG_INSTR_REF, fold that into
-      // the DIExpression.
-      if (Indirect)
-        NewDIExpr = DIExpression::prepend(FragExpr, DIExpression::DerefBefore);
-      MIB.addMetadata(NewDIExpr);
-      return MIB;
-    } else {
-      // Create a completely standard DBG_VALUE.
-      auto &Inst = TII->get(TargetOpcode::DBG_VALUE);
-      return BuildMI(MF, DL, Inst, Indirect, Reg, Variable, FragExpr);
-    }
-  };
-
   if (!IsDbgDeclare) {
     // ArgDbgValues are hoisted to the beginning of the entry block. So we
     // should only emit as ArgDbgValue if the dbg.value intrinsic is found in
@@ -5596,6 +5583,9 @@ bool SelectionDAGBuilder::EmitFuncArgumentDbgValue(
       FuncInfo.DescribedArgs.set(ArgNo);
     }
   }
+
+  MachineFunction &MF = DAG.getMachineFunction();
+  const TargetInstrInfo *TII = DAG.getSubtarget().getInstrInfo();
 
   bool IsIndirect = false;
   Optional<MachineOperand> Op;
@@ -5666,9 +5656,9 @@ bool SelectionDAGBuilder::EmitFuncArgumentDbgValue(
           DAG.AddDbgValue(SDV, false);
           continue;
         }
-        MachineInstr *NewMI =
-            MakeVRegDbgValue(RegAndSize.first, *FragmentExpr, IsDbgDeclare);
-        FuncInfo.ArgDbgValues.push_back(NewMI);
+        FuncInfo.ArgDbgValues.push_back(
+          BuildMI(MF, DL, TII->get(TargetOpcode::DBG_VALUE), IsDbgDeclare,
+                  RegAndSize.first, Variable, *FragmentExpr));
       }
     };
 
@@ -5699,15 +5689,11 @@ bool SelectionDAGBuilder::EmitFuncArgumentDbgValue(
 
   assert(Variable->isValidLocationForIntrinsic(DL) &&
          "Expected inlined-at fields to agree");
-  MachineInstr *NewMI = nullptr;
+  IsIndirect = (Op->isReg()) ? IsIndirect : true;
+  FuncInfo.ArgDbgValues.push_back(
+      BuildMI(MF, DL, TII->get(TargetOpcode::DBG_VALUE), IsIndirect,
+              *Op, Variable, Expr));
 
-  if (Op->isReg())
-    NewMI = MakeVRegDbgValue(Op->getReg(), Expr, IsIndirect);
-  else
-    NewMI = BuildMI(MF, DL, TII->get(TargetOpcode::DBG_VALUE), true, *Op,
-                    Variable, Expr);
-
-  FuncInfo.ArgDbgValues.push_back(NewMI);
   return true;
 }
 
@@ -6322,12 +6308,6 @@ void SelectionDAGBuilder::visitIntrinsicCall(const CallInst &I,
                              getValue(I.getArgOperand(0)),
                              getValue(I.getArgOperand(1)), Flags));
     return;
-  case Intrinsic::arithmetic_fence: {
-    setValue(&I, DAG.getNode(ISD::ARITH_FENCE, sdl,
-                             getValue(I.getArgOperand(0)).getValueType(),
-                             getValue(I.getArgOperand(0)), Flags));
-    return;
-  }
   case Intrinsic::fma:
     setValue(&I, DAG.getNode(
                      ISD::FMA, sdl, getValue(I.getArgOperand(0)).getValueType(),
@@ -7457,7 +7437,8 @@ SelectionDAGBuilder::lowerInvokable(TargetLowering::CallLoweringInfo &CLI,
 void SelectionDAGBuilder::LowerCallTo(const CallBase &CB, SDValue Callee,
                                       bool isTailCall,
                                       bool isMustTailCall,
-                                      const BasicBlock *EHPadBB) {
+                                      const BasicBlock *EHPadBB,
+                                      const TargetLowering::PtrAuthInfo *PAI) {
   auto &DL = DAG.getDataLayout();
   FunctionType *FTy = CB.getFunctionType();
   Type *RetTy = CB.getType();
@@ -7545,6 +7526,15 @@ void SelectionDAGBuilder::LowerCallTo(const CallBase &CB, SDValue Callee,
       .setConvergent(CB.isConvergent())
       .setIsPreallocated(
           CB.countOperandBundlesOfType(LLVMContext::OB_preallocated) != 0);
+
+  // Set the pointer authentication info if we have it.
+  if (PAI) {
+    if (!TLI.supportPtrAuthBundles())
+      report_fatal_error(
+          "This target doesn't support calls with ptrauth operand bundles.");
+    CLI.setPtrAuth(*PAI);
+  }
+
   std::pair<SDValue, SDValue> Result = lowerInvokable(CLI, EHPadBB);
 
   if (Result.first.getNode()) {
@@ -8080,6 +8070,11 @@ void SelectionDAGBuilder::visitCall(const CallInst &I) {
     }
   }
 
+  if (I.countOperandBundlesOfType(LLVMContext::OB_ptrauth)) {
+    LowerCallSiteWithPtrAuthBundle(cast<CallBase>(I), /*EHPadBB=*/nullptr);
+    return;
+  }
+
   // Deopt bundles are lowered in LowerCallSiteWithDeoptBundle, and we don't
   // have to do anything here to lower funclet bundles.
   // CFGuardTarget bundles are lowered in LowerCallTo.
@@ -8098,6 +8093,47 @@ void SelectionDAGBuilder::visitCall(const CallInst &I) {
     // is be done within LowerCallTo, after more information about the call is
     // known.
     LowerCallTo(I, Callee, I.isTailCall(), I.isMustTailCall());
+}
+
+void SelectionDAGBuilder::LowerCallSiteWithPtrAuthBundle(
+    const CallBase &CB, const BasicBlock *EHPadBB) {
+  auto PAB = CB.getOperandBundle("ptrauth");
+  auto *CalleeV = CB.getCalledOperand();
+
+  // Gather the call ptrauth data from the operand bundle:
+  //   [ i32 <key>, i64 <discriminator> ]
+  auto *Key = cast<ConstantInt>(PAB->Inputs[0]);
+  Value *Discriminator = PAB->Inputs[1];
+
+  assert(Key->getType()->isIntegerTy(32) && "Invalid ptrauth key");
+  assert(Discriminator->getType()->isIntegerTy(64) &&
+         "Invalid ptrauth discriminator");
+
+  // Look through ptrauth globals to find the raw callee.
+  // Do a direct unauthenticated call if we found it and everything matches.
+  if (auto CalleePAI = GlobalPtrAuthInfo::analyze(CalleeV)) {
+    // FIXME: bring back a static diagnostic when we can guarantee the mismatch
+    if (CalleePAI->isCompatibleWith(Key, Discriminator, DAG.getDataLayout())) {
+      LowerCallTo(CB, getValue(CalleePAI->getPointer()), CB.isTailCall(),
+                  CB.isMustTailCall(), EHPadBB);
+      return;
+    }
+  }
+
+  // Functions should never be ptrauth-called directly.
+  // We could lower these to direct unauthenticated calls, but for that to
+  // occur, there must have been a semantic mismatch somewhere leading to this
+  // arguably incorrect IR.
+  if (isa<Function>(CalleeV))
+    report_fatal_error("Cannot lower direct authenticated call to"
+                       " unauthenticated target");
+
+  // Otherwise, do an authenticated indirect call.
+  TargetLowering::PtrAuthInfo PAI = {Key->getZExtValue(),
+                                     getValue(Discriminator)};
+
+  LowerCallTo(CB, getValue(CalleeV), CB.isTailCall(), CB.isMustTailCall(),
+              EHPadBB, &PAI);
 }
 
 namespace {
@@ -8176,7 +8212,7 @@ public:
       }
     }
 
-    return TLI.getAsmOperandValueType(DL, OpTy, true);
+    return TLI.getValueType(DL, OpTy, true);
   }
 };
 
@@ -8479,8 +8515,8 @@ void SelectionDAGBuilder::visitInlineAsm(const CallBase &Call,
             DAG.getDataLayout(), STy->getElementType(ResNo));
       } else {
         assert(ResNo == 0 && "Asm only has one result!");
-        OpInfo.ConstraintVT = TLI.getAsmOperandValueType(
-            DAG.getDataLayout(), Call.getType()).getSimpleVT();
+        OpInfo.ConstraintVT =
+            TLI.getSimpleValueType(DAG.getDataLayout(), Call.getType());
       }
       ++ResNo;
     } else {
@@ -8677,10 +8713,8 @@ void SelectionDAGBuilder::visitInlineAsm(const CallBase &Call,
           RegisterSDNode *R = dyn_cast<RegisterSDNode>(AsmNodeOperands[CurOp+1]);
           Register TiedReg = R->getReg();
           MVT RegVT = R->getSimpleValueType(0);
-          const TargetRegisterClass *RC =
-              TiedReg.isVirtual()     ? MRI.getRegClass(TiedReg)
-              : RegVT != MVT::Untyped ? TLI.getRegClassFor(RegVT)
-                                      : TRI.getMinimalPhysRegClass(TiedReg);
+          const TargetRegisterClass *RC = TiedReg.isVirtual() ?
+            MRI.getRegClass(TiedReg) : TRI.getMinimalPhysRegClass(TiedReg);
           unsigned NumRegs = InlineAsm::getNumOperandRegisters(OpFlag);
           for (unsigned i = 0; i != NumRegs; ++i)
             Regs.push_back(MRI.createVirtualRegister(RC));
@@ -9537,7 +9571,7 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
     // FIXME: Split arguments if CLI.IsPostTypeLegalization
     Type *FinalType = Args[i].Ty;
     if (Args[i].IsByVal)
-      FinalType = Args[i].IndirectType;
+      FinalType = cast<PointerType>(Args[i].Ty)->getElementType();
     bool NeedsRegBlock = functionArgumentNeedsConsecutiveRegisters(
         FinalType, CLI.CallConv, CLI.IsVarArg, DL);
     for (unsigned Value = 0, NumValues = ValueVTs.size(); Value != NumValues;
@@ -9610,14 +9644,18 @@ TargetLowering::LowerCallTo(TargetLowering::CallLoweringInfo &CLI) const {
       }
       Align MemAlign;
       if (Args[i].IsByVal || Args[i].IsInAlloca || Args[i].IsPreallocated) {
-        unsigned FrameSize = DL.getTypeAllocSize(Args[i].IndirectType);
+        PointerType *Ty = cast<PointerType>(Args[i].Ty);
+        Type *ElementTy = Ty->getElementType();
+
+        unsigned FrameSize = DL.getTypeAllocSize(
+            Args[i].ByValType ? Args[i].ByValType : ElementTy);
         Flags.setByValSize(FrameSize);
 
         // info is not there but there are cases it cannot get right.
         if (auto MA = Args[i].Alignment)
           MemAlign = *MA;
         else
-          MemAlign = Align(getByValTypeAlignment(Args[i].IndirectType, DL));
+          MemAlign = Align(getByValTypeAlignment(ElementTy, DL));
       } else if (auto MA = Args[i].Alignment) {
         MemAlign = *MA;
       } else {
@@ -11076,7 +11114,10 @@ void SelectionDAGBuilder::visitStepVector(const CallInst &I) {
   const TargetLowering &TLI = DAG.getTargetLoweringInfo();
   auto DL = getCurSDLoc();
   EVT ResultVT = TLI.getValueType(DAG.getDataLayout(), I.getType());
-  setValue(&I, DAG.getStepVector(DL, ResultVT));
+  EVT OpVT =
+      TLI.getTypeToTransformTo(*DAG.getContext(), ResultVT.getScalarType());
+  SDValue Step = DAG.getConstant(1, DL, OpVT);
+  setValue(&I, DAG.getStepVector(DL, ResultVT, Step));
 }
 
 void SelectionDAGBuilder::visitVectorReverse(const CallInst &I) {

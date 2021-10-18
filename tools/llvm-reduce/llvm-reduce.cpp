@@ -105,7 +105,6 @@ void writeOutput(Module *M, StringRef Message) {
 int main(int Argc, char **Argv) {
   InitLLVM X(Argc, Argv);
 
-  cl::HideUnrelatedOptions({&Options, &getColorCategory()});
   cl::ParseCommandLineOptions(Argc, Argv, "LLVM automatic testcase reducer.\n");
 
   if (PrintDeltaPasses) {

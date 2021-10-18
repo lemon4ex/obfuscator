@@ -61,15 +61,6 @@ namespace {
         ValueKind(Expr::getValueKindForType(destType)),
         Kind(CK_Dependent), IsARCUnbridgedCast(false) {
 
-      // C++ [expr.type]/8.2.2:
-      //   If a pr-value initially has the type cv-T, where T is a
-      //   cv-unqualified non-class, non-array type, the type of the
-      //   expression is adjusted to T prior to any further analysis.
-      if (!S.Context.getLangOpts().ObjC && !DestType->isRecordType() &&
-          !DestType->isArrayType()) {
-        DestType = DestType.getUnqualifiedType();
-      }
-
       if (const BuiltinType *placeholder =
             src.get()->getType()->getAsPlaceholderType()) {
         PlaceholderKind = placeholder->getKind();
@@ -158,6 +149,14 @@ namespace {
           Sema::ACR_unbridged)
         IsARCUnbridgedCast = true;
       SrcExpr = src;
+    }
+
+    void checkQualifiedDestType() {
+      // Destination type may not be qualified with __ptrauth.
+      if (DestType.getPointerAuth()) {
+        Self.Diag(DestRange.getBegin(), diag::err_ptrauth_qualifier_cast)
+          << DestType << DestRange;
+      }
     }
 
     /// Check for and handle non-overload placeholder expressions.
@@ -306,6 +305,8 @@ Sema::BuildCXXNamedCast(SourceLocation OpLoc, tok::TokenKind Kind,
   CastOperation Op(*this, DestType, E);
   Op.OpRange = SourceRange(OpLoc, Parens.getEnd());
   Op.DestRange = AngleBrackets;
+
+  Op.checkQualifiedDestType();
 
   switch (Kind) {
   default: llvm_unreachable("Unknown C++ cast!");
@@ -2624,19 +2625,6 @@ void CastOperation::checkAddressSpaceCast(QualType SrcType, QualType DestType) {
   }
 }
 
-bool Sema::ShouldSplatAltivecScalarInCast(const VectorType *VecTy) {
-  bool SrcCompatXL = this->getLangOpts().getAltivecSrcCompat() ==
-                     LangOptions::AltivecSrcCompatKind::XL;
-  VectorType::VectorKind VKind = VecTy->getVectorKind();
-
-  if ((VKind == VectorType::AltiVecVector) ||
-      (SrcCompatXL && ((VKind == VectorType::AltiVecBool) ||
-                       (VKind == VectorType::AltiVecPixel)))) {
-    return true;
-  }
-  return false;
-}
-
 void CastOperation::CheckCXXCStyleCast(bool FunctionalStyle,
                                        bool ListInitialization) {
   assert(Self.getLangOpts().CPlusPlus);
@@ -2691,9 +2679,9 @@ void CastOperation::CheckCXXCStyleCast(bool FunctionalStyle,
 
   // AltiVec vector initialization with a single literal.
   if (const VectorType *vecTy = DestType->getAs<VectorType>())
-    if (Self.ShouldSplatAltivecScalarInCast(vecTy) &&
-        (SrcExpr.get()->getType()->isIntegerType() ||
-         SrcExpr.get()->getType()->isFloatingType())) {
+    if (vecTy->getVectorKind() == VectorType::AltiVecVector
+        && (SrcExpr.get()->getType()->isIntegerType()
+            || SrcExpr.get()->getType()->isFloatingType())) {
       Kind = CK_VectorSplat;
       SrcExpr = Self.prepareVectorSplat(DestType, SrcExpr.get());
       return;
@@ -2976,8 +2964,8 @@ void CastOperation::CheckCStyleCast() {
   }
 
   if (const VectorType *DestVecTy = DestType->getAs<VectorType>()) {
-    if (Self.ShouldSplatAltivecScalarInCast(DestVecTy) &&
-        (SrcType->isIntegerType() || SrcType->isFloatingType())) {
+    if (DestVecTy->getVectorKind() == VectorType::AltiVecVector &&
+          (SrcType->isIntegerType() || SrcType->isFloatingType())) {
       Kind = CK_VectorSplat;
       SrcExpr = Self.prepareVectorSplat(DestType, SrcExpr.get());
     } else if (Self.CheckVectorCast(OpRange, DestType, SrcType, Kind)) {
@@ -3215,6 +3203,8 @@ ExprResult Sema::BuildCStyleCastExpr(SourceLocation LPLoc,
   // -Wcast-qual
   DiagnoseCastQual(Op.Self, Op.SrcExpr, Op.DestType);
 
+  Op.checkQualifiedDestType();
+
   return Op.complete(CStyleCastExpr::Create(
       Context, Op.ResultType, Op.ValueKind, Op.Kind, Op.SrcExpr.get(),
       &Op.BasePath, CurFPFeatureOverrides(), CastTypeInfo, LPLoc, RPLoc));
@@ -3233,6 +3223,8 @@ ExprResult Sema::BuildCXXFunctionalCastExpr(TypeSourceInfo *CastTypeInfo,
   Op.CheckCXXCStyleCast(/*FunctionalCast=*/true, /*ListInit=*/false);
   if (Op.SrcExpr.isInvalid())
     return ExprError();
+
+  Op.checkQualifiedDestType();
 
   auto *SubExpr = Op.SrcExpr.get();
   if (auto *BindExpr = dyn_cast<CXXBindTemporaryExpr>(SubExpr))

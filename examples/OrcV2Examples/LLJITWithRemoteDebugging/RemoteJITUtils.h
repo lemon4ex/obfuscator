@@ -6,8 +6,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Utilities for ExecutorProcessControl-based remote JITing with Orc and
-// JITLink.
+// Utilities for TargetProcessControl-based remote JITing with Orc and JITLink.
 //
 //===----------------------------------------------------------------------===//
 
@@ -37,7 +36,7 @@ namespace llvm {
 namespace orc {
 
 class ChildProcessJITLinkExecutor;
-class RemoteExecutorProcessControl;
+class RemoteTargetProcessControl;
 class TCPSocketJITLinkExecutor;
 
 class JITLinkExecutor {
@@ -74,7 +73,7 @@ public:
   virtual ~JITLinkExecutor();
 
 protected:
-  std::unique_ptr<RemoteExecutorProcessControl> EPC;
+  std::unique_ptr<RemoteTargetProcessControl> TPC;
 
   JITLinkExecutor();
 };
@@ -101,7 +100,7 @@ private:
 /// JITLinkExecutor connected through a TCP socket.
 class TCPSocketJITLinkExecutor : public JITLinkExecutor {
 private:
-  TCPSocketJITLinkExecutor(std::unique_ptr<RemoteExecutorProcessControl> EPC);
+  TCPSocketJITLinkExecutor(std::unique_ptr<RemoteTargetProcessControl> TPC);
 
   friend class JITLinkExecutor;
 };

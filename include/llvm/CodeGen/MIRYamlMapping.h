@@ -492,7 +492,6 @@ struct DebugValueSubstitution {
   unsigned SrcOp;
   unsigned DstInst;
   unsigned DstOp;
-  unsigned Subreg;
 
   bool operator==(const DebugValueSubstitution &Other) const {
     return std::tie(SrcInst, SrcOp, DstInst, DstOp) ==
@@ -506,7 +505,6 @@ template <> struct MappingTraits<DebugValueSubstitution> {
     YamlIO.mapRequired("srcop", Sub.SrcOp);
     YamlIO.mapRequired("dstinst", Sub.DstInst);
     YamlIO.mapRequired("dstop", Sub.DstOp);
-    YamlIO.mapRequired("subreg", Sub.Subreg);
   }
 
   static const bool flow = true;

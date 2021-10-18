@@ -25,33 +25,23 @@
 
 using namespace llvm;
 
-cl::OptionCategory CXXMapCategory("CXX Map Options");
-
 cl::opt<std::string> OldSymbolFile(cl::Positional, cl::Required,
-                                   cl::desc("<symbol-file>"),
-                                   cl::cat(CXXMapCategory));
+                                   cl::desc("<symbol-file>"));
 cl::opt<std::string> NewSymbolFile(cl::Positional, cl::Required,
-                                   cl::desc("<symbol-file>"),
-                                   cl::cat(CXXMapCategory));
+                                   cl::desc("<symbol-file>"));
 cl::opt<std::string> RemappingFile("remapping-file", cl::Required,
-                                   cl::desc("Remapping file"),
-                                   cl::cat(CXXMapCategory));
-cl::alias RemappingFileA("r", cl::aliasopt(RemappingFile),
-                         cl::cat(CXXMapCategory));
+                                   cl::desc("Remapping file"));
+cl::alias RemappingFileA("r", cl::aliasopt(RemappingFile));
 cl::opt<std::string> OutputFilename("output", cl::value_desc("output"),
-                                    cl::init("-"), cl::desc("Output file"),
-                                    cl::cat(CXXMapCategory));
-cl::alias OutputFilenameA("o", cl::aliasopt(OutputFilename),
-                          cl::cat(CXXMapCategory));
+                                    cl::init("-"), cl::desc("Output file"));
+cl::alias OutputFilenameA("o", cl::aliasopt(OutputFilename));
 
 cl::opt<bool> WarnAmbiguous(
     "Wambiguous",
-    cl::desc("Warn on equivalent symbols in the output symbol list"),
-    cl::cat(CXXMapCategory));
+    cl::desc("Warn on equivalent symbols in the output symbol list"));
 cl::opt<bool> WarnIncomplete(
     "Wincomplete",
-    cl::desc("Warn on input symbols missing from output symbol list"),
-    cl::cat(CXXMapCategory));
+    cl::desc("Warn on input symbols missing from output symbol list"));
 
 static void warn(Twine Message, Twine Whence = "",
                  std::string Hint = "") {
@@ -141,7 +131,6 @@ static void remapSymbols(MemoryBuffer &OldSymbolFile,
 int main(int argc, const char *argv[]) {
   InitLLVM X(argc, argv);
 
-  cl::HideUnrelatedOptions({&CXXMapCategory, &getColorCategory()});
   cl::ParseCommandLineOptions(argc, argv, "LLVM C++ mangled name remapper\n");
 
   auto OldSymbolBufOrError = MemoryBuffer::getFileOrSTDIN(OldSymbolFile);

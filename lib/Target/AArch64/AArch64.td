@@ -426,20 +426,6 @@ def FeatureEnhancedCounterVirtualization :
       SubtargetFeature<"ecv", "HasEnhancedCounterVirtualization",
       "true", "Enable enhanced counter virtualization extension">;
 
-def FeatureRME : SubtargetFeature<"rme", "HasRME",
-    "true", "Enable Realm Management Extension">;
-
-// FIXME: SME should only imply the subset of SVE(2) instructions that are
-// legal in streaming mode.
-def FeatureSME : SubtargetFeature<"sme", "HasSME", "true",
-  "Enable Scalable Matrix Extension (SME)", [FeatureSVE2, FeatureBF16]>;
-
-def FeatureSMEF64 : SubtargetFeature<"sme-f64", "HasSMEF64", "true",
-  "Enable Scalable Matrix Extension (SME) F64F64 instructions", [FeatureSME]>;
-
-def FeatureSMEI64 : SubtargetFeature<"sme-i64", "HasSMEI64", "true",
-  "Enable Scalable Matrix Extension (SME) I16I64 instructions", [FeatureSME]>;
-
 //===----------------------------------------------------------------------===//
 // Architectures.
 //
@@ -558,10 +544,6 @@ def SVEUnsupported : AArch64Unsupported {
 
 def PAUnsupported : AArch64Unsupported {
   let F = [HasPAuth];
-}
-
-def SMEUnsupported : AArch64Unsupported {
-  let F = [HasSME, HasSMEF64, HasSMEI64];
 }
 
 include "AArch64SchedA53.td"
@@ -1205,8 +1187,9 @@ def : ProcessorModel<"thunderx2t99", ThunderX2T99Model, [ProcThunderX2T99]>;
 def : ProcessorModel<"thunderx3t110", ThunderX3T110Model, [ProcThunderX3T110]>;
 def : ProcessorModel<"tsv110", TSV110Model, [ProcTSV110]>;
 
-// Support cyclone as an alias for apple-a7 so we can still LTO old bitcode.
+// Support some CPU codenames as aliases for apple-aN so we can still LTO old bitcode.
 def : ProcessorModel<"cyclone", CycloneModel, [ProcAppleA7]>;
+def : ProcessorModel<"vortex", CycloneModel, [ProcAppleA12]>;
 
 // iPhone and iPad CPUs
 def : ProcessorModel<"apple-a7", CycloneModel, [ProcAppleA7]>;

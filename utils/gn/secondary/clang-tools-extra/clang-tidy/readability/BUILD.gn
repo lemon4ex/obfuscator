@@ -48,7 +48,6 @@ static_library("readability") {
     "StaticAccessedThroughInstanceCheck.cpp",
     "StaticDefinitionInAnonymousNamespaceCheck.cpp",
     "StringCompareCheck.cpp",
-    "SuspiciousCallArgumentCheck.cpp",
     "UniqueptrDeleteReleaseCheck.cpp",
     "UppercaseLiteralSuffixCheck.cpp",
     "UseAnyOfAllOfCheck.cpp",

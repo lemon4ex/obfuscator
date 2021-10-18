@@ -575,7 +575,6 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
         LiveInMap.insert(LI);
 
   // Insert DBG_VALUE instructions for function arguments to the entry block.
-  bool InstrRef = TM.Options.ValueTrackingVariableLocations;
   for (unsigned i = 0, e = FuncInfo->ArgDbgValues.size(); i != e; ++i) {
     MachineInstr *MI = FuncInfo->ArgDbgValues[e - i - 1];
     assert(MI->getOpcode() != TargetOpcode::DBG_VALUE_LIST &&
@@ -595,10 +594,6 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
         LLVM_DEBUG(dbgs() << "Dropping debug info for dead vreg"
                           << Register::virtReg2Index(Reg) << "\n");
     }
-
-    // Don't try and extend through copies in instruction referencing mode.
-    if (InstrRef)
-      continue;
 
     // If Reg is live-in then update debug info to track its copy in a vreg.
     DenseMap<unsigned, unsigned>::iterator LDI = LiveInMap.find(Reg);
@@ -650,10 +645,6 @@ bool SelectionDAGISel::runOnMachineFunction(MachineFunction &mf) {
       }
     }
   }
-
-  // For debug-info, in instruction referencing mode, we need to perform some
-  // post-isel maintenence.
-  MF->finalizeDebugInstrRefs();
 
   // Determine if there are any calls in this machine function.
   MachineFrameInfo &MFI = MF->getFrameInfo();
@@ -1660,7 +1651,7 @@ static bool MIIsInTerminatorSequence(const MachineInstr &MI) {
     // physical registers if there is debug info associated with the terminator
     // of our mbb. We want to include said debug info in our terminator
     // sequence, so we return true in that case.
-    return MI.isDebugInstr();
+    return MI.isDebugValue();
 
   // We have left the terminator sequence if we are not doing one of the
   // following:
@@ -2334,11 +2325,6 @@ void SelectionDAGISel::Select_FREEZE(SDNode *N) {
                        N->getOperand(0));
 }
 
-void SelectionDAGISel::Select_ARITH_FENCE(SDNode *N) {
-  CurDAG->SelectNodeTo(N, TargetOpcode::ARITH_FENCE, N->getValueType(0),
-                       N->getOperand(0));
-}
-
 /// GetVBR - decode a vbr encoding whose top bit is set.
 LLVM_ATTRIBUTE_ALWAYS_INLINE static uint64_t
 GetVBR(uint64_t Val, const unsigned char *MatcherTable, unsigned &Idx) {
@@ -2889,9 +2875,6 @@ void SelectionDAGISel::SelectCodeCommon(SDNode *NodeToMatch,
     return;
   case ISD::FREEZE:
     Select_FREEZE(NodeToMatch);
-    return;
-  case ISD::ARITH_FENCE:
-    Select_ARITH_FENCE(NodeToMatch);
     return;
   }
 

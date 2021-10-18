@@ -1045,11 +1045,6 @@ void ValueEnumerator::EnumerateAttributes(AttributeList PAL) {
     if (Entry == 0) {
       AttributeGroups.push_back(Pair);
       Entry = AttributeGroups.size();
-
-      for (Attribute Attr : AS) {
-        if (Attr.isTypeAttribute())
-          EnumerateType(Attr.getValueAsType());
-      }
     }
   }
 }

@@ -21,6 +21,6 @@
 ; CHECK: Loop passes:
 ; CHECK: no-op-loop
 ; CHECK: Loop passes with params:
-; CHECK: simple-loop-unswitch<nontrivial;no-nontrivial;trivial;no-trivial>
+; CHECK: unswitch<no-nontrivial;nontrivial>
 ; CHECK: Loop analyses:
 ; CHECK: no-op-loop

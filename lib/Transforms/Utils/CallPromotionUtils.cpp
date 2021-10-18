@@ -490,8 +490,11 @@ CallBase &llvm::promoteCall(CallBase &CB, Function *Callee,
 
       // If byval is used, this must be a pointer type, and the byval type must
       // match the element type. Update it if present.
-      if (ArgAttrs.getByValType())
-        ArgAttrs.addByValAttr(Callee->getParamByValType(ArgNo));
+      if (ArgAttrs.getByValType()) {
+        Type *NewTy = Callee->getParamByValType(ArgNo);
+        ArgAttrs.addByValAttr(
+            NewTy ? NewTy : cast<PointerType>(FormalTy)->getElementType());
+      }
 
       NewArgAttrs.push_back(AttributeSet::get(Ctx, ArgAttrs));
       AttributeChanged = true;

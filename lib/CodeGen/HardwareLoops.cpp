@@ -187,7 +187,7 @@ namespace {
                  const DataLayout &DL,
                  OptimizationRemarkEmitter *ORE) :
       SE(SE), DL(DL), ORE(ORE), L(Info.L), M(L->getHeader()->getModule()),
-      ExitCount(Info.ExitCount),
+      TripCount(Info.TripCount),
       CountType(Info.CountType),
       ExitBranch(Info.ExitBranch),
       LoopDecrement(Info.LoopDecrement),
@@ -202,7 +202,7 @@ namespace {
     OptimizationRemarkEmitter *ORE = nullptr;
     Loop *L                 = nullptr;
     Module *M               = nullptr;
-    const SCEV *ExitCount   = nullptr;
+    const SCEV *TripCount   = nullptr;
     Type *CountType         = nullptr;
     BranchInst *ExitBranch  = nullptr;
     Value *LoopDecrement    = nullptr;
@@ -296,7 +296,7 @@ bool HardwareLoops::TryConvertLoop(HardwareLoopInfo &HWLoopInfo) {
   }
 
   assert(
-      (HWLoopInfo.ExitBlock && HWLoopInfo.ExitBranch && HWLoopInfo.ExitCount) &&
+      (HWLoopInfo.ExitBlock && HWLoopInfo.ExitBranch && HWLoopInfo.TripCount) &&
       "Hardware Loop must have set exit info.");
 
   BasicBlock *Preheader = L->getLoopPreheader();
@@ -381,18 +381,13 @@ Value *HardwareLoop::InitLoopCount() {
   // loop counter and tests that is not zero?
 
   SCEVExpander SCEVE(SE, DL, "loopcnt");
-  if (!ExitCount->getType()->isPointerTy() &&
-      ExitCount->getType() != CountType)
-    ExitCount = SE.getZeroExtendExpr(ExitCount, CountType);
-
-  ExitCount = SE.getAddExpr(ExitCount, SE.getOne(CountType));
 
   // If we're trying to use the 'test and set' form of the intrinsic, we need
   // to replace a conditional branch that is controlling entry to the loop. It
   // is likely (guaranteed?) that the preheader has an unconditional branch to
   // the loop header, so also check if it has a single predecessor.
-  if (SE.isLoopEntryGuardedByCond(L, ICmpInst::ICMP_NE, ExitCount,
-                                  SE.getZero(ExitCount->getType()))) {
+  if (SE.isLoopEntryGuardedByCond(L, ICmpInst::ICMP_NE, TripCount,
+                                  SE.getZero(TripCount->getType()))) {
     LLVM_DEBUG(dbgs() << " - Attempting to use test.set counter.\n");
     UseLoopGuard |= ForceGuardLoopEntry;
   } else
@@ -404,19 +399,19 @@ Value *HardwareLoop::InitLoopCount() {
     BasicBlock *Predecessor = BB->getSinglePredecessor();
     // If it's not safe to create a while loop then don't force it and create a
     // do-while loop instead
-    if (!isSafeToExpandAt(ExitCount, Predecessor->getTerminator(), SE))
+    if (!isSafeToExpandAt(TripCount, Predecessor->getTerminator(), SE))
         UseLoopGuard = false;
     else
         BB = Predecessor;
   }
 
-  if (!isSafeToExpandAt(ExitCount, BB->getTerminator(), SE)) {
-    LLVM_DEBUG(dbgs() << "- Bailing, unsafe to expand ExitCount "
-               << *ExitCount << "\n");
+  if (!isSafeToExpandAt(TripCount, BB->getTerminator(), SE)) {
+    LLVM_DEBUG(dbgs() << "- Bailing, unsafe to expand TripCount "
+               << *TripCount << "\n");
     return nullptr;
   }
 
-  Value *Count = SCEVE.expandCodeFor(ExitCount, CountType,
+  Value *Count = SCEVE.expandCodeFor(TripCount, CountType,
                                      BB->getTerminator());
 
   // FIXME: We've expanded Count where we hope to insert the counter setting
@@ -429,9 +424,9 @@ Value *HardwareLoop::InitLoopCount() {
   UseLoopGuard = UseLoopGuard && CanGenerateTest(L, Count);
   BeginBB = UseLoopGuard ? BB : L->getLoopPreheader();
   LLVM_DEBUG(dbgs() << " - Loop Count: " << *Count << "\n"
-                    << " - Expanded Count in " << BB->getName() << "\n"
-                    << " - Will insert set counter intrinsic into: "
-                    << BeginBB->getName() << "\n");
+             << " - Expanded Count in " << BB->getName() << "\n"
+             << " - Will insert set counter intrinsic into: "
+             << BeginBB->getName() << "\n");
   return Count;
 }
 

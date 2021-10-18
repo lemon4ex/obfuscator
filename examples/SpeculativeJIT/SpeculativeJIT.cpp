@@ -49,11 +49,7 @@ public:
     if (!DL)
       return DL.takeError();
 
-    auto EPC = SelfExecutorProcessControl::Create();
-    if (!EPC)
-      return EPC.takeError();
-
-    auto ES = std::make_unique<ExecutionSession>(std::move(*EPC));
+    auto ES = std::make_unique<ExecutionSession>();
 
     auto LCTMgr = createLocalLazyCallThroughManager(
         JTMB->getTargetTriple(), *ES,

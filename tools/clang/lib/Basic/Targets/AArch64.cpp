@@ -14,6 +14,7 @@
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/TargetBuiltins.h"
 #include "clang/Basic/TargetInfo.h"
+#include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -105,6 +106,9 @@ AArch64TargetInfo::AArch64TargetInfo(const llvm::Triple &Triple,
   else if (Triple.getOS() == llvm::Triple::UnknownOS)
     this->MCountName =
         Opts.EABIVersion == llvm::EABI::GNU ? "\01_mcount" : "mcount";
+
+  if (Triple.getArchName() == "arm64e")
+    PointerAuthSupported = true;
 }
 
 StringRef AArch64TargetInfo::getABI() const { return ABI; }
@@ -431,8 +435,7 @@ bool AArch64TargetInfo::hasFeature(StringRef Feature) const {
            Feature == "sve2-aes" || Feature == "sve2-sha3" ||
            Feature == "sve2-sm4" || Feature == "f64mm" || Feature == "f32mm" ||
            Feature == "i8mm" || Feature == "bf16") &&
-          (FPU & SveMode)) ||
-         (Feature == "ls64" && HasLS64);
+          (FPU & SveMode));
 }
 
 bool AArch64TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
@@ -577,13 +580,14 @@ AArch64TargetInfo::checkCallingConvention(CallingConv CC) const {
   switch (CC) {
   case CC_C:
   case CC_Swift:
-  case CC_SwiftAsync:
   case CC_PreserveMost:
   case CC_PreserveAll:
   case CC_OpenCLKernel:
   case CC_AArch64VectorCall:
   case CC_Win64:
     return CCCR_OK;
+  case CC_SwiftAsync:
+    return checkSwiftAsyncCCSupported();
   default:
     return CCCR_Warning;
   }
@@ -753,9 +757,6 @@ bool AArch64TargetInfo::validateConstraintModifier(
       if (Size == 64)
         return true;
 
-      if (Size == 512)
-        return HasLS64;
-
       SuggestedModifier = "w";
       return false;
     }
@@ -771,6 +772,11 @@ int AArch64TargetInfo::getEHDataRegisterNumber(unsigned RegNo) const {
   if (RegNo == 1)
     return 1;
   return -1;
+}
+
+bool AArch64TargetInfo::validatePointerAuthKey(
+    const llvm::APSInt &value) const {
+  return 0 <= value && value <= 3;
 }
 
 bool AArch64TargetInfo::hasInt128Type() const { return true; }
@@ -855,9 +861,10 @@ WindowsARM64TargetInfo::checkCallingConvention(CallingConv CC) const {
   case CC_PreserveMost:
   case CC_PreserveAll:
   case CC_Swift:
-  case CC_SwiftAsync:
   case CC_Win64:
     return CCCR_OK;
+  case CC_SwiftAsync:
+    return checkSwiftAsyncCCSupported();
   default:
     return CCCR_Warning;
   }

@@ -55,16 +55,9 @@ enum NodeType {
   /// value that has already been zero or sign extended from a narrower type.
   /// These nodes take two operands.  The first is the node that has already
   /// been extended, and the second is a value type node indicating the width
-  /// of the extension.
-  /// NOTE: In case of the source value (or any vector element value) is
-  /// poisoned the assertion will not be true for that value.
+  /// of the extension
   AssertSext,
   AssertZext,
-
-  /// AssertAlign - These nodes record if a register contains a value that
-  /// has a known alignment and the trailing bits are known to be zero.
-  /// NOTE: In case of the source value (or any vector element value) is
-  /// poisoned the assertion will not be true for that value.
   AssertAlign,
 
   /// Various leaf nodes.
@@ -82,6 +75,10 @@ enum NodeType {
   ConstantPool,
   ExternalSymbol,
   BlockAddress,
+
+  /// A llvm.ptrauth global
+  /// wrapper llvm.ptrauth global, ptr, key, addr-disc, disc
+  PtrAuthGlobalAddress,
 
   /// The address of the GOT
   GLOBAL_OFFSET_TABLE,
@@ -347,8 +344,9 @@ enum NodeType {
   USHLSAT,
 
   /// RESULT = [US]MULFIX(LHS, RHS, SCALE) - Perform fixed point multiplication
-  /// on 2 integers with the same width and scale. SCALE represents the scale
-  /// of both operands as fixed point numbers. This SCALE parameter must be a
+  /// on
+  /// 2 integers with the same width and scale. SCALE represents the scale of
+  /// both operands as fixed point numbers. This SCALE parameter must be a
   /// constant integer. A scale of zero is effectively performing
   /// multiplication on 2 integers.
   SMULFIX,
@@ -600,12 +598,15 @@ enum NodeType {
 
   /// STEP_VECTOR(IMM) - Returns a scalable vector whose lanes are comprised
   /// of a linear sequence of unsigned values starting from 0 with a step of
-  /// IMM, where IMM must be a TargetConstant with type equal to the vector
-  /// element type. The arithmetic is performed modulo the bitwidth of the
-  /// element.
-  ///
+  /// IMM, where IMM must be a vector index constant integer value which must
+  /// fit in the vector element type.
+  /// Note that IMM may be a smaller type than the vector element type, in
+  /// which case the step is implicitly sign-extended to the vector element
+  /// type. IMM may also be a larger type than the vector element type, in
+  /// which case the step is implicitly truncated to the vector element type.
   /// The operation does not support returning fixed-width vectors or
-  /// non-constant operands.
+  /// non-constant operands. If the sequence value exceeds the limit allowed
+  /// for the element type then the values for those lanes are undefined.
   STEP_VECTOR,
 
   /// MULHU/MULHS - Multiply high - Multiply two integers of type iN,
@@ -1099,10 +1100,6 @@ enum NodeType {
   /// read / write specifier, locality specifier and instruction / data cache
   /// specifier.
   PREFETCH,
-
-  /// ARITH_FENCE - This corresponds to a arithmetic fence intrinsic. Both its
-  /// operand and output are the same floating type.
-  ARITH_FENCE,
 
   /// OUTCHAIN = ATOMIC_FENCE(INCHAIN, ordering, scope)
   /// This corresponds to the fence instruction. It takes an input chain, and

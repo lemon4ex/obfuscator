@@ -8,18 +8,17 @@
 
 #include "X86Counter.h"
 
-#if defined(__linux__) && defined(HAVE_LIBPFM) &&                              \
-    defined(LIBPFM_HAS_FIELD_CYCLES)
-
 // FIXME: Use appropriate wrappers for poll.h and mman.h
 // to support Windows and remove this linux-only guard.
-
+#ifdef __linux__
 #include "llvm/Support/Endian.h"
 #include "llvm/Support/Errc.h"
 
-#include <perfmon/perf_event.h>
-#include <perfmon/pfmlib.h>
-#include <perfmon/pfmlib_perf_event.h>
+#ifdef HAVE_LIBPFM
+#include "perfmon/perf_event.h"
+#include "perfmon/pfmlib.h"
+#include "perfmon/pfmlib_perf_event.h"
+#endif // HAVE_LIBPFM
 
 #include <atomic>
 #include <chrono>
@@ -33,6 +32,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#if defined(HAVE_LIBPFM) && defined(LIBPFM_HAS_FIELD_CYCLES)
 namespace llvm {
 namespace exegesis {
 
@@ -178,7 +178,6 @@ llvm::Error X86LbrCounter::checkLbrSupport() {
   }
 
   counter.stop();
-  (void)Sum;
 
   auto ResultOrError = counter.doReadCounter(nullptr, nullptr);
   if (ResultOrError)
@@ -257,5 +256,5 @@ X86LbrCounter::doReadCounter(const void *From, const void *To) const {
 } // namespace exegesis
 } // namespace llvm
 
-#endif // defined(__linux__) && defined(HAVE_LIBPFM) &&
-       // defined(LIBPFM_HAS_FIELD_CYCLES)
+#endif //  defined(HAVE_LIBPFM) && defined(LIBPFM_HAS_FIELD_CYCLES)
+#endif // __linux__

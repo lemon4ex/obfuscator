@@ -553,7 +553,7 @@ public:
     return Ranges;
   }
 
-  StringRef getFixedSizePortion() const { return FixedSizePortion.str(); }
+  StringRef getFixedSizePortion() const { return FixedSizePortion; }
 
   static bool classof(const MCFragment *F) {
     return F->getKind() == MCFragment::FT_CVDefRange;

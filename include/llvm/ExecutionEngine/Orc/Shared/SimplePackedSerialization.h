@@ -85,7 +85,6 @@ public:
   bool skip(size_t Size) {
     if (Size > Remaining)
       return false;
-    Buffer += Size;
     Remaining -= Size;
     return true;
   }
@@ -174,6 +173,15 @@ public:
 // Any empty placeholder suitable as a substitute for void when deserializing
 class SPSEmpty {};
 
+/// SPS tag type for target addresses.
+///
+/// SPSTagTargetAddresses should be serialized as a uint64_t value.
+class SPSTagTargetAddress;
+
+template <>
+class SPSSerializationTraits<SPSTagTargetAddress, uint64_t>
+    : public SPSSerializationTraits<uint64_t, uint64_t> {};
+
 /// SPS tag type for tuples.
 ///
 /// A blob tuple should be serialized by serializing each of the elements in
@@ -193,11 +201,11 @@ template <typename SPSElementTagT> class SPSSequence;
 /// SPS tag type for strings, which are equivalent to sequences of chars.
 using SPSString = SPSSequence<char>;
 
-/// SPS tag type for executor addresseses.
-class SPSExecutorAddress {};
+/// SPS tag type for target addresseses.
+class SPSTargetAddress {};
 
 template <>
-class SPSSerializationTraits<SPSExecutorAddress, uint64_t>
+class SPSSerializationTraits<SPSTargetAddress, uint64_t>
     : public SPSSerializationTraits<uint64_t, uint64_t> {};
 
 /// SPS tag type for maps.

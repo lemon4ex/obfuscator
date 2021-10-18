@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Frontend/CompilerInstance.h"
+#include "clang/APINotes/APINotesReader.h"
 #include "clang/AST/ASTConsumer.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
@@ -28,6 +29,7 @@
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "clang/Frontend/Utils.h"
 #include "clang/Frontend/VerifyDiagnosticConsumer.h"
+#include "clang/Index/IndexingAction.h"
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/PreprocessorOptions.h"
@@ -485,7 +487,7 @@ void CompilerInstance::createPreprocessor(TranslationUnitKind TUKind) {
   PP->setPreprocessedOutput(getPreprocessorOutputOpts().ShowCPP);
 
   if (PP->getLangOpts().Modules && PP->getLangOpts().ImplicitModules) {
-    std::string ModuleHash = getInvocation().getModuleHash();
+    std::string ModuleHash = getInvocation().getModuleHash(getDiagnostics());
     PP->getHeaderSearchInfo().setModuleHash(ModuleHash);
     PP->getHeaderSearchInfo().setModuleCachePath(
         getSpecificModuleCachePath(ModuleHash));
@@ -551,7 +553,7 @@ void CompilerInstance::createASTContext() {
   Preprocessor &PP = getPreprocessor();
   auto *Context = new ASTContext(getLangOpts(), PP.getSourceManager(),
                                  PP.getIdentifierTable(), PP.getSelectorTable(),
-                                 PP.getBuiltinInfo(), PP.TUKind);
+                                 PP.getBuiltinInfo());
   Context->InitBuiltinTypes(getTarget(), getAuxTarget());
   setASTContext(Context);
 }
@@ -693,6 +695,27 @@ void CompilerInstance::createSema(TranslationUnitKind TUKind,
                                   CodeCompleteConsumer *CompletionConsumer) {
   TheSema.reset(new Sema(getPreprocessor(), getASTContext(), getASTConsumer(),
                          TUKind, CompletionConsumer));
+
+  // Set up API notes.
+  TheSema->APINotes.setSwiftVersion(getAPINotesOpts().SwiftVersion);
+
+  // If we're building a module and are supposed to load API notes,
+  // notify the API notes manager.
+  if (auto currentModule = getPreprocessor().getCurrentModule()) {
+    (void)TheSema->APINotes.loadCurrentModuleAPINotes(
+            currentModule,
+            getLangOpts().APINotesModules,
+            getAPINotesOpts().ModuleSearchPaths);
+    // Check for any attributes we should add to the module
+    for (auto reader : TheSema->APINotes.getCurrentModuleReaders()) {
+      // swift_infer_import_as_member
+      if (reader->getModuleOptions().SwiftInferImportAsMember) {
+        currentModule->IsSwiftInferImportAsMember = true;
+        break;
+      }
+    }
+  }
+
   // Attach the external sema source if there is any.
   if (ExternalSemaSrc) {
     TheSema->addExternalSource(ExternalSemaSrc.get());
@@ -1054,15 +1077,6 @@ compileModuleImpl(CompilerInstance &ImportingInstance, SourceLocation ImportLoc,
                       [](CompilerInstance &) {}) {
   llvm::TimeTraceScope TimeScope("Module Compile", ModuleName);
 
-  // Never compile a module that's already finalized - this would cause the
-  // existing module to be freed, causing crashes if it is later referenced
-  if (ImportingInstance.getModuleCache().isPCMFinal(ModuleFileName)) {
-    ImportingInstance.getDiagnostics().Report(
-        ImportLoc, diag::err_module_rebuild_finalized)
-        << ModuleName;
-    return false;
-  }
-
   // Construct a compiler invocation for creating this module.
   auto Invocation =
       std::make_shared<CompilerInvocation>(ImportingInstance.getInvocation());
@@ -1120,8 +1134,10 @@ compileModuleImpl(CompilerInstance &ImportingInstance, SourceLocation ImportLoc,
   PPOpts.RetainRemappedFileBuffers = true;
 
   Invocation->getDiagnosticOpts().VerifyDiagnostics = 0;
-  assert(ImportingInstance.getInvocation().getModuleHash() ==
-         Invocation->getModuleHash() && "Module hash mismatch!");
+  assert(ImportingInstance.getInvocation().getModuleHash(
+             ImportingInstance.getDiagnostics()) ==
+             Invocation->getModuleHash(ImportingInstance.getDiagnostics()) &&
+         "Module hash mismatch!");
 
   // Construct a compiler instance that will be used to actually create the
   // module.  Since we're sharing an in-memory module cache,
@@ -1146,6 +1162,10 @@ compileModuleImpl(CompilerInstance &ImportingInstance, SourceLocation ImportLoc,
   SourceMgr.pushModuleBuildStack(ModuleName,
     FullSourceLoc(ImportLoc, ImportingInstance.getSourceManager()));
 
+  // Pass along the GenModuleActionWrapper callback
+  auto wrapGenModuleAction = ImportingInstance.getGenModuleActionWrapper();
+  Instance.setGenModuleActionWrapper(wrapGenModuleAction);
+
   // If we're collecting module dependencies, we need to share a collector
   // between all of the module CompilerInstances. Other than that, we don't
   // want to produce any dependency output from the module build.
@@ -1163,8 +1183,14 @@ compileModuleImpl(CompilerInstance &ImportingInstance, SourceLocation ImportLoc,
   llvm::CrashRecoveryContext CRC;
   CRC.RunSafelyOnThread(
       [&]() {
-        GenerateModuleFromModuleMapAction Action;
-        Instance.ExecuteAction(Action);
+        // FIXME: I have no idea what the best way to do this is, but it's
+        // probably not this. Interfaces changed upstream.
+        std::unique_ptr<FrontendAction> Action(
+            new GenerateModuleFromModuleMapAction);
+        if (wrapGenModuleAction) {
+          Action = wrapGenModuleAction(FrontendOpts, std::move(Action));
+        }
+        Instance.ExecuteAction(*Action);
       },
       DesiredStackSize);
 

@@ -123,7 +123,6 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializePowerPCTarget() {
   initializePPCTLSDynamicCallPass(PR);
   initializePPCMIPeepholePass(PR);
   initializePPCLowerMASSVEntriesPass(PR);
-  initializePPCExpandAtomicPseudoPass(PR);
   initializeGlobalISel(PR);
 }
 
@@ -540,10 +539,6 @@ void PPCPassConfig::addPreEmitPass() {
 }
 
 void PPCPassConfig::addPreEmitPass2() {
-  // Schedule the expansion of AMOs at the last possible moment, avoiding the
-  // possibility for other passes to break the requirements for forward
-  // progress in the LL/SC block.
-  addPass(createPPCExpandAtomicPseudoPass());
   // Must run branch selection immediately preceding the asm printer.
   addPass(createPPCBranchSelectionPass());
 }

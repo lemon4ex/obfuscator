@@ -159,7 +159,6 @@
 ; CHECK-NEXT:       Machine Loop Invariant Code Motion
 ; CHECK-NEXT:       AArch64 Redundant Copy Elimination
 ; CHECK-NEXT:       A57 FP Anti-dependency breaker
-; CHECK-NEXT:       Remove Redundant DEBUG_VALUE analysis
 ; CHECK-NEXT:       Fixup Statepoint Caller Saved
 ; CHECK-NEXT:       PostRA Machine Sink
 ; CHECK-NEXT:       MachineDominator Tree Construction
@@ -195,6 +194,7 @@
 ; CHECK-NEXT:       AArch64 Branch Targets
 ; CHECK-NEXT:       Branch relaxation pass
 ; CHECK-NEXT:       AArch64 Compress Jump Tables
+; CHECK-NEXT:       AArch64 Expand Hardened Pseudos
 ; CHECK-NEXT:       Contiguously Lay Out Funclets
 ; CHECK-NEXT:       StackMap Liveness Analysis
 ; CHECK-NEXT:       Live DEBUG_VALUE analysis

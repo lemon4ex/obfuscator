@@ -1134,7 +1134,6 @@ unsigned UnwrappedLineFormatter::format(
   unsigned Penalty = 0;
   LevelIndentTracker IndentTracker(Style, Keywords, Lines[0]->Level,
                                    AdditionalIndent);
-  const AnnotatedLine *PrevPrevLine = nullptr;
   const AnnotatedLine *PreviousLine = nullptr;
   const AnnotatedLine *NextLine = nullptr;
 
@@ -1173,7 +1172,7 @@ unsigned UnwrappedLineFormatter::format(
     if (ShouldFormat && TheLine.Type != LT_Invalid) {
       if (!DryRun) {
         bool LastLine = Line->First->is(tok::eof);
-        formatFirstToken(TheLine, PreviousLine, PrevPrevLine, Lines, Indent,
+        formatFirstToken(TheLine, PreviousLine, Lines, Indent,
                          LastLine ? LastStartColumn : NextStartColumn + Indent);
       }
 
@@ -1219,7 +1218,7 @@ unsigned UnwrappedLineFormatter::format(
                               TheLine.LeadingEmptyLinesAffected);
         // Format the first token.
         if (ReformatLeadingWhitespace)
-          formatFirstToken(TheLine, PreviousLine, PrevPrevLine, Lines,
+          formatFirstToken(TheLine, PreviousLine, Lines,
                            TheLine.First->OriginalColumn,
                            TheLine.First->OriginalColumn);
         else
@@ -1235,7 +1234,6 @@ unsigned UnwrappedLineFormatter::format(
     }
     if (!DryRun)
       markFinalized(TheLine.First);
-    PrevPrevLine = PreviousLine;
     PreviousLine = &TheLine;
   }
   PenaltyCache[CacheKey] = Penalty;
@@ -1244,7 +1242,6 @@ unsigned UnwrappedLineFormatter::format(
 
 void UnwrappedLineFormatter::formatFirstToken(
     const AnnotatedLine &Line, const AnnotatedLine *PreviousLine,
-    const AnnotatedLine *PrevPrevLine,
     const SmallVectorImpl<AnnotatedLine *> &Lines, unsigned Indent,
     unsigned NewlineIndent) {
   FormatToken &RootToken = *Line.First;
@@ -1276,8 +1273,6 @@ void UnwrappedLineFormatter::formatFirstToken(
   if (!Style.KeepEmptyLinesAtTheStartOfBlocks && PreviousLine &&
       PreviousLine->Last->is(tok::l_brace) &&
       !PreviousLine->startsWithNamespace() &&
-      !(PrevPrevLine && PrevPrevLine->startsWithNamespace() &&
-        PreviousLine->startsWith(tok::l_brace)) &&
       !startsExternCBlock(*PreviousLine))
     Newlines = 1;
 

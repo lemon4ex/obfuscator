@@ -17,6 +17,7 @@
 #include "llvm/ExecutionEngine/Orc/Layer.h"
 #include <algorithm>
 #include <memory>
+#include <string>
 
 namespace llvm {
 namespace orc {

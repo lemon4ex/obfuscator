@@ -75,7 +75,6 @@ FunctionPass *createAMDGPURewriteOutArgumentsPass();
 ModulePass *createAMDGPUReplaceLDSUseWithPointerPass();
 ModulePass *createAMDGPULowerModuleLDSPass();
 FunctionPass *createSIModeRegisterPass();
-FunctionPass *createGCNPreRAOptimizationsPass();
 
 struct AMDGPUSimplifyLibCallsPass : PassInfoMixin<AMDGPUSimplifyLibCallsPass> {
   AMDGPUSimplifyLibCallsPass(TargetMachine &TM) : TM(TM) {}
@@ -97,8 +96,6 @@ extern char &AMDGPUMachineCFGStructurizerID;
 void initializeAMDGPUAlwaysInlinePass(PassRegistry&);
 
 Pass *createAMDGPUAnnotateKernelFeaturesPass();
-Pass *createAMDGPUAttributorPass();
-void initializeAMDGPUAttributorPass(PassRegistry &);
 void initializeAMDGPUAnnotateKernelFeaturesPass(PassRegistry &);
 extern char &AMDGPUAnnotateKernelFeaturesID;
 
@@ -285,9 +282,6 @@ ModulePass *createAMDGPUPrintfRuntimeBinding();
 void initializeAMDGPUPrintfRuntimeBindingPass(PassRegistry&);
 extern char &AMDGPUPrintfRuntimeBindingID;
 
-void initializeAMDGPUResourceUsageAnalysisPass(PassRegistry &);
-extern char &AMDGPUResourceUsageAnalysisID;
-
 struct AMDGPUPrintfRuntimeBindingPass
     : PassInfoMixin<AMDGPUPrintfRuntimeBindingPass> {
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM);
@@ -353,9 +347,6 @@ extern char &AMDGPUOpenCLEnqueuedBlockLoweringID;
 
 void initializeGCNNSAReassignPass(PassRegistry &);
 extern char &GCNNSAReassignID;
-
-void initializeGCNPreRAOptimizationsPass(PassRegistry &);
-extern char &GCNPreRAOptimizationsID;
 
 namespace AMDGPU {
 enum TargetIndex {

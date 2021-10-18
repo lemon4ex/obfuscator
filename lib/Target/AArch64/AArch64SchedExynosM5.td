@@ -25,8 +25,7 @@ def ExynosM5Model : SchedMachineModel {
   let CompleteModel         =   1; // Use the default model otherwise.
 
   list<Predicate> UnsupportedFeatures = !listconcat(SVEUnsupported.F,
-                                                    PAUnsupported.F,
-                                                    SMEUnsupported.F);
+                                                    PAUnsupported.F);
 }
 
 //===----------------------------------------------------------------------===//

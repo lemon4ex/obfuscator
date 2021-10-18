@@ -158,7 +158,7 @@ static cl::opt<bool> EnableFalkorHWPFFix("aarch64-enable-falkor-hwpf-fix",
 
 static cl::opt<bool>
     EnableBranchTargets("aarch64-enable-branch-targets", cl::Hidden,
-                        cl::desc("Enable the AArch64 branch target pass"),
+                        cl::desc("Enable the AAcrh64 branch target pass"),
                         cl::init(true));
 
 static cl::opt<unsigned> SVEVectorBitsMaxOpt(
@@ -213,6 +213,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeAArch64Target() {
   initializeAArch64StackTaggingPass(*PR);
   initializeAArch64StackTaggingPreRAPass(*PR);
   initializeAArch64LowerHomogeneousPrologEpilogPass(*PR);
+  initializeAArch64ExpandHardenedPseudosPass(*PR);
 }
 
 //===----------------------------------------------------------------------===//
@@ -333,6 +334,7 @@ AArch64TargetMachine::AArch64TargetMachine(const Target &T, const Triple &TT,
   // MachO/CodeModel::Large, which GlobalISel does not support.
   if (getOptLevel() <= EnableGlobalISelAtO &&
       TT.getArch() != Triple::aarch64_32 &&
+      TT.getArchName() != "arm64e" &&
       TT.getEnvironment() != Triple::GNUILP32 &&
       !(getCodeModel() == CodeModel::Large && TT.isOSBinFormatMachO())) {
     setGlobalISel(true);
@@ -747,6 +749,10 @@ void AArch64PassConfig::addPreEmitPass() {
 
   if (TM->getOptLevel() != CodeGenOpt::None && EnableCompressJumpTables)
     addPass(createAArch64CompressJumpTablesPass());
+
+  // Expand hardened pseudo-instructions.
+  // Do this now to enable LOH emission.
+  addPass(createAArch64ExpandHardenedPseudosPass());
 
   if (TM->getOptLevel() != CodeGenOpt::None && EnableCollectLOH &&
       TM->getTargetTriple().isOSBinFormatMachO())

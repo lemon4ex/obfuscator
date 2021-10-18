@@ -199,14 +199,16 @@ static bool checkOrderedReduction(RecurKind Kind, Instruction *ExactFPMathInst,
   if (Kind != RecurKind::FAdd)
     return false;
 
-  if (Exit->getOpcode() != Instruction::FAdd || Exit != ExactFPMathInst)
-    return false;
+  bool IsOrdered =
+      Exit->getOpcode() == Instruction::FAdd && Exit == ExactFPMathInst;
 
   // The only pattern accepted is the one in which the reduction PHI
   // is used as one of the operands of the exit instruction
   auto *LHS = Exit->getOperand(0);
   auto *RHS = Exit->getOperand(1);
-  if (LHS != Phi && RHS != Phi)
+  IsOrdered &= ((LHS == Phi) || (RHS == Phi));
+
+  if (!IsOrdered)
     return false;
 
   LLVM_DEBUG(dbgs() << "LV: Found an ordered reduction: Phi: " << *Phi
@@ -644,7 +646,6 @@ bool RecurrenceDescriptor::hasMultipleUsesOf(
 
   return false;
 }
-
 bool RecurrenceDescriptor::isReductionPHI(PHINode *Phi, Loop *TheLoop,
                                           RecurrenceDescriptor &RedDes,
                                           DemandedBits *DB, AssumptionCache *AC,

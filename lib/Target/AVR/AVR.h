@@ -22,7 +22,6 @@ namespace llvm {
 class AVRTargetMachine;
 class FunctionPass;
 
-Pass *createAVRShiftExpandPass();
 FunctionPass *createAVRISelDag(AVRTargetMachine &TM,
                                CodeGenOpt::Level OptLevel);
 FunctionPass *createAVRExpandPseudoPass();
@@ -31,7 +30,6 @@ FunctionPass *createAVRRelaxMemPass();
 FunctionPass *createAVRDynAllocaSRPass();
 FunctionPass *createAVRBranchSelectionPass();
 
-void initializeAVRShiftExpandPass(PassRegistry &);
 void initializeAVRExpandPseudoPass(PassRegistry&);
 void initializeAVRRelaxMemPass(PassRegistry&);
 

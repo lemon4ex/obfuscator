@@ -79,7 +79,6 @@ public:
     printDispatchHistogram(OS);
   }
   StringRef getNameAsString() const override { return "DispatchStatistics"; }
-  json::Value toJSON() const override;
 };
 } // namespace mca
 } // namespace llvm

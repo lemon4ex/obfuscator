@@ -318,7 +318,6 @@ private:
   void CannotYetSelect(SDNode *N);
 
   void Select_FREEZE(SDNode *N);
-  void Select_ARITH_FENCE(SDNode *N);
 
 private:
   void DoInstructionSelection();

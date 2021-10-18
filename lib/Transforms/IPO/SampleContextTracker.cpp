@@ -433,7 +433,8 @@ ContextTrieNode *SampleContextTracker::getContextFor(const DILocation *DIL) {
     if (Name.empty())
       Name = PrevDIL->getScope()->getSubprogram()->getName();
     S.push_back(
-        std::make_pair(FunctionSamples::getCallSiteIdentifier(DIL), Name));
+        std::make_pair(FunctionSamples::getCallSiteIdentifier(DIL),
+                       PrevDIL->getScope()->getSubprogram()->getLinkageName()));
     PrevDIL = DIL;
   }
 

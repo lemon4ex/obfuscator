@@ -525,13 +525,9 @@ ExprResult Sema::DefaultFunctionArrayConversion(Expr *E, bool Diagnose) {
     // An lvalue or rvalue of type "array of N T" or "array of unknown bound of
     // T" can be converted to an rvalue of type "pointer to T".
     //
-    if (getLangOpts().C99 || getLangOpts().CPlusPlus || E->isLValue()) {
-      ExprResult Res = ImpCastExprToType(E, Context.getArrayDecayedType(Ty),
-                                         CK_ArrayToPointerDecay);
-      if (Res.isInvalid())
-        return ExprError();
-      E = Res.get();
-    }
+    if (getLangOpts().C99 || getLangOpts().CPlusPlus || E->isLValue())
+      E = ImpCastExprToType(E, Context.getArrayDecayedType(Ty),
+                            CK_ArrayToPointerDecay).get();
   }
   return E;
 }
@@ -1544,6 +1540,11 @@ QualType Sema::UsualArithmeticConversions(ExprResult &LHS, ExprResult &RHS,
   // If both types are identical, no conversion is needed.
   if (LHSType == RHSType)
     return LHSType;
+
+  // ExtInt types aren't subject to conversions between them or normal integers,
+  // so this fails.
+  if(LHSType->isExtIntType() || RHSType->isExtIntType())
+    return QualType();
 
   // At this point, we have two different arithmetic types.
 
@@ -4053,10 +4054,6 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok, Scope *UDLScope) {
 
 ExprResult Sema::ActOnParenExpr(SourceLocation L, SourceLocation R, Expr *E) {
   assert(E && "ActOnParenExpr() missing expr");
-  QualType ExprTy = E->getType();
-  if (getLangOpts().ProtectParens && CurFPFeatures.getAllowFPReassociate() &&
-      !E->isLValue() && ExprTy->hasFloatingRepresentation())
-    return BuildBuiltinCallExpr(R, Builtin::BI__arithmetic_fence, E);
   return new (Context) ParenExpr(L, R, E);
 }
 
@@ -4075,6 +4072,17 @@ static bool CheckVecStepTraitOperandType(Sema &S, QualType T,
 
   assert((T->isVoidType() || !T->isIncompleteType()) &&
          "Scalar types should always be complete");
+  return false;
+}
+
+static bool CheckPtrAuthTypeDiscriminatorOperandType(Sema &S, QualType T,
+                                                     SourceLocation Loc,
+                                                     SourceRange ArgRange) {
+  if (T->isVariablyModifiedType()) {
+    S.Diag(Loc, diag::err_ptrauth_type_disc_variably_modified) << T << ArgRange;
+    return true;
+  }
+
   return false;
 }
 
@@ -4281,6 +4289,10 @@ bool Sema::CheckUnaryExprOrTypeTraitOperand(QualType ExprType,
 
   if (ExprKind == UETT_VecStep)
     return CheckVecStepTraitOperandType(*this, ExprType, OpLoc, ExprRange);
+
+  if (ExprKind == UETT_PtrAuthTypeDiscriminator)
+    return CheckPtrAuthTypeDiscriminatorOperandType(
+        *this, ExprType, OpLoc, ExprRange);
 
   // Explicitly list some types as extensions.
   if (!CheckExtensionTraitOperandType(*this, ExprType, OpLoc, ExprRange,
@@ -5546,7 +5558,7 @@ Sema::CreateBuiltinArraySubscriptExpr(Expr *Base, SourceLocation LLoc,
     BaseExpr = LHSExp;    // vectors: V[123]
     IndexExpr = RHSExp;
     // We apply C++ DR1213 to vector subscripting too.
-    if (getLangOpts().CPlusPlus11 && LHSExp->isPRValue()) {
+    if (getLangOpts().CPlusPlus11 && LHSExp->getValueKind() == VK_PRValue) {
       ExprResult Materialized = TemporaryMaterializationConversion(LHSExp);
       if (Materialized.isInvalid())
         return ExprError();
@@ -5927,7 +5939,6 @@ Sema::ConvertArgumentsForCall(CallExpr *Call, Expr *Fn,
   for (unsigned i = 0; i < TotalNumArgs; ++i)
     Call->setArg(i, AllArgs[i]);
 
-  Call->computeDependence();
   return false;
 }
 
@@ -6564,29 +6575,6 @@ ExprResult Sema::BuildCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
                                ExecConfig, IsExecConfig);
 }
 
-/// BuildBuiltinCallExpr - Create a call to a builtin function specified by Id
-//  with the specified CallArgs
-Expr *Sema::BuildBuiltinCallExpr(SourceLocation Loc, Builtin::ID Id,
-                                 MultiExprArg CallArgs) {
-  StringRef Name = Context.BuiltinInfo.getName(Id);
-  LookupResult R(*this, &Context.Idents.get(Name), Loc,
-                 Sema::LookupOrdinaryName);
-  LookupName(R, TUScope, /*AllowBuiltinCreation=*/true);
-
-  auto *BuiltInDecl = R.getAsSingle<FunctionDecl>();
-  assert(BuiltInDecl && "failed to find builtin declaration");
-
-  ExprResult DeclRef =
-      BuildDeclRefExpr(BuiltInDecl, BuiltInDecl->getType(), VK_LValue, Loc);
-  assert(DeclRef.isUsable() && "Builtin reference cannot fail");
-
-  ExprResult Call =
-      BuildCallExpr(/*Scope=*/nullptr, DeclRef.get(), Loc, CallArgs, Loc);
-
-  assert(!Call.isInvalid() && "Call to builtin cannot fail!");
-  return Call.get();
-}
-
 /// Parse a __builtin_astype expression.
 ///
 /// __builtin_astype( value, dst type )
@@ -6863,7 +6851,6 @@ ExprResult Sema::BuildResolvedCallExpr(Expr *Fn, NamedDecl *NDecl,
 
       TheCall->setArg(i, Arg);
     }
-    TheCall->computeDependence();
   }
 
   if (CXXMethodDecl *Method = dyn_cast_or_null<CXXMethodDecl>(FDecl))
@@ -7706,7 +7693,7 @@ ExprResult Sema::BuildVectorLiteral(SourceLocation LParenLoc,
   // initializers must be one or must match the size of the vector.
   // If a single value is specified in the initializer then it will be
   // replicated to all the components of the vector
-  if (ShouldSplatAltivecScalarInCast(VTy)) {
+  if (VTy->getVectorKind() == VectorType::AltiVecVector) {
     // The number of initializers must be one or must match the size of the
     // vector. If a single value is specified in the initializer then it will
     // be replicated to all the components of the vector
@@ -7926,6 +7913,14 @@ static QualType checkConditionalPointerCompatibility(Sema &S, ExprResult &LHS,
   auto LHSCastKind = CK_BitCast, RHSCastKind = CK_BitCast;
   lhQual.removeCVRQualifiers();
   rhQual.removeCVRQualifiers();
+
+  if (lhQual.getPointerAuth() != rhQual.getPointerAuth()) {
+    S.Diag(Loc, diag::err_typecheck_cond_incompatible_ptrauth)
+      << LHSTy << RHSTy
+      << LHS.get()->getSourceRange()
+      << RHS.get()->getSourceRange();
+    return QualType();
+  }
 
   // OpenCL v2.0 specification doesn't extend compatibility of type qualifiers
   // (C99 6.7.3) for address spaces. We assume that the check should behave in
@@ -8942,6 +8937,10 @@ checkPointerTypesForAssignment(Sema &S, QualType LHSType, QualType RHSType) {
     else if (lhq.getObjCLifetime() != rhq.getObjCLifetime())
       ConvTy = Sema::IncompatiblePointerDiscardsQualifiers;
 
+    // Treat pointer-auth mismatches as fatal.
+    else if (lhq.getPointerAuth() != rhq.getPointerAuth())
+      ConvTy = Sema::IncompatiblePointerDiscardsQualifiers;
+
     // For GCC/MS compatibility, other qualifier mismatches are treated
     // as still compatible in C.
     else ConvTy = Sema::CompatiblePointerDiscardsQualifiers;
@@ -9664,6 +9663,16 @@ Sema::CheckSingleAssignmentConstraints(QualType LHSType, ExprResult &CallerRHS,
     if (RHS.isInvalid())
       return Incompatible;
   }
+
+  Expr *PRE = RHS.get()->IgnoreParenCasts();
+  if (Diagnose && isa<ObjCProtocolExpr>(PRE)) {
+    ObjCProtocolDecl *PDecl = cast<ObjCProtocolExpr>(PRE)->getProtocol();
+    if (PDecl && !PDecl->hasDefinition()) {
+      Diag(PRE->getExprLoc(), diag::warn_atprotocol_protocol) << PDecl;
+      Diag(PDecl->getLocation(), diag::note_entity_declared_at) << PDecl;
+    }
+  }
+
   CastKind Kind;
   Sema::AssignConvertType result =
     CheckAssignmentConstraints(LHSType, RHS, Kind, ConvertRHS);
@@ -10159,7 +10168,7 @@ QualType Sema::CheckVectorOperands(ExprResult &LHS, ExprResult &RHS,
                                     RHSType, DiagID))
         return RHSType;
     } else {
-      if (LHS.get()->isLValue() ||
+      if (LHS.get()->getValueKind() == VK_LValue ||
           !tryGCCVectorConvertAndSplat(*this, &LHS, &RHS))
         return RHSType;
     }
@@ -10428,22 +10437,6 @@ static void diagnoseArithmeticOnNullPointer(Sema &S, SourceLocation Loc,
       << Pointer->getSourceRange();
   else
     S.Diag(Loc, diag::warn_pointer_arith_null_ptr)
-      << S.getLangOpts().CPlusPlus << Pointer->getSourceRange();
-}
-
-/// Diagnose invalid subraction on a null pointer.
-///
-static void diagnoseSubtractionOnNullPointer(Sema &S, SourceLocation Loc,
-                                             Expr *Pointer, bool BothNull) {
-  // Null - null is valid in C++ [expr.add]p7
-  if (BothNull && S.getLangOpts().CPlusPlus)
-    return;
-
-  // Is this s a macro from a system header?
-  if (S.Diags.getSuppressSystemWarnings() && S.SourceMgr.isInSystemMacro(Loc))
-    return;
-
-  S.Diag(Loc, diag::warn_pointer_sub_null_ptr)
       << S.getLangOpts().CPlusPlus << Pointer->getSourceRange();
 }
 
@@ -10878,16 +10871,7 @@ QualType Sema::CheckSubtractionOperands(ExprResult &LHS, ExprResult &RHS,
                                                LHS.get(), RHS.get()))
         return QualType();
 
-      bool LHSIsNullPtr = LHS.get()->IgnoreParenCasts()->isNullPointerConstant(
-          Context, Expr::NPC_ValueDependentIsNotNull);
-      bool RHSIsNullPtr = RHS.get()->IgnoreParenCasts()->isNullPointerConstant(
-          Context, Expr::NPC_ValueDependentIsNotNull);
-
-      // Subtracting nullptr or from nullptr is suspect
-      if (LHSIsNullPtr)
-        diagnoseSubtractionOnNullPointer(*this, Loc, LHS.get(), RHSIsNullPtr);
-      if (RHSIsNullPtr)
-        diagnoseSubtractionOnNullPointer(*this, Loc, RHS.get(), LHSIsNullPtr);
+      // FIXME: Add warnings for nullptr - ptr.
 
       // The pointee type may have zero size.  As an extension, a structure or
       // union may have zero size or an array may have zero length.  In this
@@ -12277,30 +12261,11 @@ QualType Sema::CheckVectorCompareOperands(ExprResult &LHS, ExprResult &RHS,
 
   QualType LHSType = LHS.get()->getType();
 
-  // Determine the return type of a vector compare. By default clang will return
-  // a scalar for all vector compares except vector bool and vector pixel.
-  // With the gcc compiler we will always return a vector type and with the xl
-  // compiler we will always return a scalar type. This switch allows choosing
-  // which behavior is prefered.
-  if (getLangOpts().AltiVec) {
-    switch (getLangOpts().getAltivecSrcCompat()) {
-    case LangOptions::AltivecSrcCompatKind::Mixed:
-      // If AltiVec, the comparison results in a numeric type, i.e.
-      // bool for C++, int for C
-      if (vType->castAs<VectorType>()->getVectorKind() ==
-          VectorType::AltiVecVector)
-        return Context.getLogicalOperationType();
-      else
-        Diag(Loc, diag::warn_deprecated_altivec_src_compat);
-      break;
-    case LangOptions::AltivecSrcCompatKind::GCC:
-      // For GCC we always return the vector type.
-      break;
-    case LangOptions::AltivecSrcCompatKind::XL:
-      return Context.getLogicalOperationType();
-      break;
-    }
-  }
+  // If AltiVec, the comparison results in a numeric type, i.e.
+  // bool for C++, int for C
+  if (getLangOpts().AltiVec &&
+      vType->castAs<VectorType>()->getVectorKind() == VectorType::AltiVecVector)
+    return Context.getLogicalOperationType();
 
   // For non-floating point types, check for self-comparisons of the form
   // x == x, x != x, x < x, etc.  These always evaluate to a constant, and
@@ -13663,6 +13628,39 @@ QualType Sema::CheckAddressOfOperand(ExprResult &OrigOp, SourceLocation OpLoc) {
 
     QualType MPTy = Context.getMemberPointerType(
         op->getType(), Context.getTypeDeclType(MD->getParent()).getTypePtr());
+
+    if (getLangOpts().PointerAuthCalls && MD->isVirtual() &&
+        !isUnevaluatedContext() && !MPTy->isDependentType()) {
+      // When pointer authentication is enabled, argument and return types of
+      // vitual member functions must be complete. This is because vitrual
+      // member function pointers are implemented using virtual dispatch
+      // thunks and the thunks cannot be emitted if the argument or return
+      // types are incomplete.
+      auto ReturnOrParamTypeIsIncomplete = [&](QualType T,
+                                               SourceLocation DeclRefLoc,
+                                               SourceLocation RetArgTypeLoc) {
+        if (RequireCompleteType(DeclRefLoc, T, diag::err_incomplete_type)) {
+          Diag(DeclRefLoc,
+               diag::note_ptrauth_virtual_function_pointer_incomplete_arg_ret);
+          Diag(RetArgTypeLoc,
+               diag::note_ptrauth_virtual_function_incomplete_arg_ret_type)
+              << T;
+          return true;
+        }
+        return false;
+      };
+      QualType RetTy = MD->getReturnType();
+      bool IsIncomplete =
+          !RetTy->isVoidType() &&
+          ReturnOrParamTypeIsIncomplete(
+              RetTy, OpLoc, MD->getReturnTypeSourceRange().getBegin());
+      for (auto *PVD : MD->parameters())
+        IsIncomplete |= ReturnOrParamTypeIsIncomplete(PVD->getType(), OpLoc,
+                                                      PVD->getBeginLoc());
+      if (IsIncomplete)
+        return QualType();
+    }
+
     // Under the MS ABI, lock down the inheritance model now.
     if (Context.getTargetInfo().getCXXABI().isMicrosoft())
       (void)isCompleteType(OpLoc, MPTy);
@@ -14939,7 +14937,7 @@ ExprResult Sema::CreateBuiltinUnaryOp(SourceLocation OpLoc,
     // complex l-values to ordinary l-values and all other values to r-values.
     if (Input.isInvalid()) return ExprError();
     if (Opc == UO_Real || Input.get()->getType()->isAnyComplexType()) {
-      if (Input.get()->isGLValue() &&
+      if (Input.get()->getValueKind() != VK_PRValue &&
           Input.get()->getObjectKind() == OK_Ordinary)
         VK = Input.get()->getValueKind();
     } else if (!getLangOpts().CPlusPlus) {
@@ -15683,7 +15681,7 @@ ExprResult Sema::ActOnBlockStmtExpr(SourceLocation CaretLoc,
         if (!Result.isInvalid()) {
           Result = PerformCopyInitialization(
               InitializedEntity::InitializeBlock(Var->getLocation(),
-                                                 Cap.getCaptureType()),
+                                                 Cap.getCaptureType(), false),
               Loc, Result.get());
         }
 
@@ -16099,7 +16097,9 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
     if (lhq.getAddressSpace() != rhq.getAddressSpace()) {
       DiagKind = diag::err_typecheck_incompatible_address_space;
       break;
-
+    } else if (lhq.getPointerAuth() != rhq.getPointerAuth()) {
+      DiagKind = diag::err_typecheck_incompatible_ptrauth;
+      break;
     } else if (lhq.getObjCLifetime() != rhq.getObjCLifetime()) {
       DiagKind = diag::err_typecheck_incompatible_ownership;
       break;
@@ -16794,10 +16794,8 @@ void Sema::PopExpressionEvaluationContext() {
 
   if (!Rec.Lambdas.empty()) {
     using ExpressionKind = ExpressionEvaluationContextRecord::ExpressionKind;
-    if (!getLangOpts().CPlusPlus20 &&
-        (Rec.ExprContext == ExpressionKind::EK_TemplateArgument ||
-         Rec.isUnevaluated() ||
-         (Rec.isConstantEvaluated() && !getLangOpts().CPlusPlus17))) {
+    if (Rec.ExprContext == ExpressionKind::EK_TemplateArgument || Rec.isUnevaluated() ||
+        (Rec.isConstantEvaluated() && !getLangOpts().CPlusPlus17)) {
       unsigned D;
       if (Rec.isUnevaluated()) {
         // C++11 [expr.prim.lambda]p2:
@@ -19176,7 +19174,7 @@ namespace {
       Expr *SubExpr = SubResult.get();
       E->setSubExpr(SubExpr);
       E->setType(S.Context.getPointerType(SubExpr->getType()));
-      assert(E->isPRValue());
+      assert(E->getValueKind() == VK_PRValue);
       assert(E->getObjectKind() == OK_Ordinary);
       return E;
     }
@@ -19186,7 +19184,7 @@ namespace {
 
       E->setType(VD->getType());
 
-      assert(E->isPRValue());
+      assert(E->getValueKind() == VK_PRValue);
       if (S.getLangOpts().CPlusPlus &&
           !(isa<CXXMethodDecl>(VD) &&
             cast<CXXMethodDecl>(VD)->isInstance()))
@@ -19277,7 +19275,7 @@ namespace {
         return ExprError();
       }
 
-      assert(E->isPRValue());
+      assert(E->getValueKind() == VK_PRValue);
       assert(E->getObjectKind() == OK_Ordinary);
       E->setType(DestType);
 
@@ -19437,7 +19435,7 @@ ExprResult RebuildUnknownAnyExpr::VisitObjCMessageExpr(ObjCMessageExpr *E) {
 ExprResult RebuildUnknownAnyExpr::VisitImplicitCastExpr(ImplicitCastExpr *E) {
   // The only case we should ever see here is a function-to-pointer decay.
   if (E->getCastKind() == CK_FunctionToPointerDecay) {
-    assert(E->isPRValue());
+    assert(E->getValueKind() == VK_PRValue);
     assert(E->getObjectKind() == OK_Ordinary);
 
     E->setType(DestType);
@@ -19451,7 +19449,7 @@ ExprResult RebuildUnknownAnyExpr::VisitImplicitCastExpr(ImplicitCastExpr *E) {
     E->setSubExpr(Result.get());
     return E;
   } else if (E->getCastKind() == CK_LValueToRValue) {
-    assert(E->isPRValue());
+    assert(E->getValueKind() == VK_PRValue);
     assert(E->getObjectKind() == OK_Ordinary);
 
     assert(isa<BlockPointerType>(E->getType()));
@@ -19815,26 +19813,16 @@ Sema::ActOnObjCBoolLiteral(SourceLocation OpLoc, tok::TokenKind Kind) {
 ExprResult Sema::ActOnObjCAvailabilityCheckExpr(
     llvm::ArrayRef<AvailabilitySpec> AvailSpecs, SourceLocation AtLoc,
     SourceLocation RParen) {
-  auto FindSpecVersion = [&](StringRef Platform) -> Optional<VersionTuple> {
-    auto Spec = llvm::find_if(AvailSpecs, [&](const AvailabilitySpec &Spec) {
-      return Spec.getPlatform() == Platform;
-    });
-    // Transcribe the "ios" availability check to "maccatalyst" when compiling
-    // for "maccatalyst" if "maccatalyst" is not specified.
-    if (Spec == AvailSpecs.end() && Platform == "maccatalyst") {
-      Spec = llvm::find_if(AvailSpecs, [&](const AvailabilitySpec &Spec) {
-        return Spec.getPlatform() == "ios";
-      });
-    }
-    if (Spec == AvailSpecs.end())
-      return None;
-    return Spec->getVersion();
-  };
+
+  StringRef Platform = getASTContext().getTargetInfo().getPlatformName();
+
+  auto Spec = llvm::find_if(AvailSpecs, [&](const AvailabilitySpec &Spec) {
+    return Spec.getPlatform() == Platform;
+  });
 
   VersionTuple Version;
-  if (auto MaybeVersion =
-          FindSpecVersion(Context.getTargetInfo().getPlatformName()))
-    Version = *MaybeVersion;
+  if (Spec != AvailSpecs.end())
+    Version = Spec->getVersion();
 
   // The use of `@available` in the enclosing context should be analyzed to
   // warn when it's used inappropriately (i.e. not if(@available)).

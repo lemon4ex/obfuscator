@@ -766,10 +766,8 @@ static BasicBlock *SplitBlockImpl(BasicBlock *Old, Instruction *SplitPt,
                             BBName);
   }
   BasicBlock::iterator SplitIt = SplitPt->getIterator();
-  while (isa<PHINode>(SplitIt) || SplitIt->isEHPad()) {
+  while (isa<PHINode>(SplitIt) || SplitIt->isEHPad())
     ++SplitIt;
-    assert(SplitIt != SplitPt->getParent()->end());
-  }
   std::string Name = BBName.str();
   BasicBlock *New = Old->splitBasicBlock(
       SplitIt, Name.empty() ? Old->getName() + ".split" : Name);
@@ -1456,8 +1454,8 @@ void llvm::SplitBlockAndInsertIfThenElse(Value *Cond, Instruction *SplitBefore,
   ReplaceInstWithInst(HeadOldTerm, HeadNewTerm);
 }
 
-BranchInst *llvm::GetIfCondition(BasicBlock *BB, BasicBlock *&IfTrue,
-                                 BasicBlock *&IfFalse) {
+Value *llvm::GetIfCondition(BasicBlock *BB, BasicBlock *&IfTrue,
+                             BasicBlock *&IfFalse) {
   PHINode *SomePHI = dyn_cast<PHINode>(BB->begin());
   BasicBlock *Pred1 = nullptr;
   BasicBlock *Pred2 = nullptr;
@@ -1523,7 +1521,7 @@ BranchInst *llvm::GetIfCondition(BasicBlock *BB, BasicBlock *&IfTrue,
       return nullptr;
     }
 
-    return Pred1Br;
+    return Pred1Br->getCondition();
   }
 
   // Ok, if we got here, both predecessors end with an unconditional branch to
@@ -1545,7 +1543,7 @@ BranchInst *llvm::GetIfCondition(BasicBlock *BB, BasicBlock *&IfTrue,
     IfTrue = Pred2;
     IfFalse = Pred1;
   }
-  return BI;
+  return BI->getCondition();
 }
 
 // After creating a control flow hub, the operands of PHINodes in an outgoing

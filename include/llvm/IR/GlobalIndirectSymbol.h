@@ -35,8 +35,9 @@ public:
   GlobalIndirectSymbol &operator=(const GlobalIndirectSymbol &) = delete;
 
   // allocate space for exactly one operand
-  void *operator new(size_t S) { return User::operator new(S, 1); }
-  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+  void *operator new(size_t s) {
+    return User::operator new(s, 1);
+  }
 
   /// Provide fast operand accessors
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Constant);

@@ -111,8 +111,6 @@ def err_module_cycle : Error<"cyclic dependency in module '%0': %1">,
   DefaultFatal;
 def err_module_prebuilt : Error<
   "error in loading module '%0' from prebuilt module path">, DefaultFatal;
-def err_module_rebuild_finalized : Error<
-  "cannot rebuild module '%0' as it is already finalized">, DefaultFatal;
 def note_pragma_entered_here : Note<"#pragma entered here">;
 def note_decl_hiding_tag_type : Note<
   "%1 %0 is hidden by a non-type declaration of %0 here">;
@@ -337,6 +335,19 @@ def note_mt_message : Note<"[rewriter] %0">;
 def warn_arcmt_nsalloc_realloc : Warning<"[rewriter] call returns pointer to GC managed memory; it will become unmanaged in ARC">;
 def err_arcmt_nsinvocation_ownership : Error<"NSInvocation's %0 is not safe to be used with an object with ownership other than __unsafe_unretained">;
 
+// API notes
+def err_apinotes_message : Error<"%0">;
+def warn_apinotes_message : Warning<"%0">, InGroup<DiagGroup<"apinotes">>;
+def note_apinotes_message : Note<"%0">;
+
+class NonportablePrivateAPINotesPath  : Warning<
+  "private API notes file for module '%0' should be named "
+  "'%0_private.apinotes', not '%1'">;
+def warn_apinotes_private_case : NonportablePrivateAPINotesPath,
+  InGroup<DiagGroup<"nonportable-private-apinotes-path">>;
+def warn_apinotes_private_case_system : NonportablePrivateAPINotesPath, 
+  DefaultIgnore, InGroup<DiagGroup<"nonportable-private-system-apinotes-path">>;
+
 // C++ for OpenCL.
 def err_openclcxx_not_supported : Error<
   "'%0' is not supported in C++ for OpenCL">;
@@ -369,6 +380,4 @@ def warn_opencl_unsupported_core_feature : Warning<
 
 def err_opencl_extension_and_feature_differs : Error<
   "options %0 and %1 are set to different values">;
-def err_opencl_feature_requires : Error<
-  "feature %0 requires support of %1 feature">;
 }

@@ -839,9 +839,9 @@ bool VectorCombine::foldSingleElementStore(Instruction &I) {
                              MemoryLocation::get(SI), AA))
       return false;
 
-    Value *GEP = Builder.CreateInBoundsGEP(
-        SI->getValueOperand()->getType(), SI->getPointerOperand(),
-        {ConstantInt::get(Idx->getType(), 0), Idx});
+    Value *GEP = GetElementPtrInst::CreateInBounds(
+        SI->getPointerOperand(), {ConstantInt::get(Idx->getType(), 0), Idx});
+    Builder.Insert(GEP);
     StoreInst *NSI = Builder.CreateStore(NewElement, GEP);
     NSI->copyMetadata(*SI);
     Align ScalarOpAlignment = computeAlignmentAfterScalarization(

@@ -239,10 +239,6 @@ void LivePhysRegs::addLiveIns(const MachineBasicBlock &MBB) {
   addBlockLiveIns(MBB);
 }
 
-void LivePhysRegs::addLiveInsNoPristines(const MachineBasicBlock &MBB) {
-  addBlockLiveIns(MBB);
-}
-
 void llvm::computeLiveIns(LivePhysRegs &LiveRegs,
                           const MachineBasicBlock &MBB) {
   const MachineFunction &MF = *MBB.getParent();

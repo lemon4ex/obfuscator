@@ -361,7 +361,7 @@ void coro::Shape::buildFrom(Function &F) {
 
     // Replace all coro.ends with unreachable instruction.
     for (AnyCoroEndInst *CE : CoroEnds)
-      changeToUnreachable(CE);
+      changeToUnreachable(CE, /*UseLLVMTrap=*/false);
 
     return;
   }
@@ -697,7 +697,7 @@ void CoroIdAsyncInst::checkWellFormed() const {
 
 static void checkAsyncContextProjectFunction(const Instruction *I,
                                              Function *F) {
-  auto *FunTy = cast<FunctionType>(F->getValueType());
+  auto *FunTy = cast<FunctionType>(F->getType()->getPointerElementType());
   if (!FunTy->getReturnType()->isPointerTy() ||
       !FunTy->getReturnType()->getPointerElementType()->isIntegerTy(8))
     fail(I,

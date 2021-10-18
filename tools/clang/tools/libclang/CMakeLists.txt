@@ -1,12 +1,7 @@
-# The SOVERSION should be updated only if a change is made to the libclang
-# ABI, and when it is updated, it should be updated to the current
-# LLVM_VERSION_MAJOR.
-# Please also see clang/tools/libclang/libclang.map
-set(CLANG_SONAME 13)
-
 set(SOURCES
   ARCMigrate.cpp
   BuildSystem.cpp
+  CDependencies.cpp
   CIndex.cpp
   CIndexCXX.cpp
   CIndexCodeCompletion.cpp
@@ -15,6 +10,7 @@ set(SOURCES
   CIndexInclusionStack.cpp
   CIndexUSRs.cpp
   CIndexer.cpp
+  CRefactor.cpp
   CXComment.cpp
   CXCursor.cpp
   CXIndexDataConsumer.cpp
@@ -24,6 +20,7 @@ set(SOURCES
   CXStoredDiagnostic.cpp
   CXString.cpp
   CXType.cpp
+  Driver.cpp
   Indexing.cpp
   FatalErrorHandler.cpp
   Rewrite.cpp
@@ -43,7 +40,10 @@ set(SOURCES
 
 set(LIBS
   clangAST
+  clangASTMatchers
+  clangAPINotes
   clangBasic
+  clangDependencyScanning
   clangDriver
   clangFrontend
   clangIndex
@@ -52,6 +52,7 @@ set(LIBS
   clangSema
   clangSerialization
   clangTooling
+  clangToolingRefactor
 )
 
 if (CLANG_ENABLE_ARCMT)
@@ -70,28 +71,13 @@ endif ()
 option(LIBCLANG_BUILD_STATIC
   "Build libclang as a static library (in addition to a shared one)" OFF)
 
-set(LLVM_EXPORTED_SYMBOL_FILE ${CMAKE_CURRENT_BINARY_DIR}/libclang-generic.exports)
-set(LIBCLANG_VERSION_SCRIPT_FILE ${CMAKE_CURRENT_SOURCE_DIR}/libclang.map)
+set(LLVM_EXPORTED_SYMBOL_FILE ${CMAKE_CURRENT_SOURCE_DIR}/libclang.exports)
 
 if(MSVC)
   # Avoid LNK4197 by not specifying libclang.exports here.
   # Each functions is exported as "dllexport" in include/clang-c.
   # KB835326
   set(LLVM_EXPORTED_SYMBOL_FILE)
-endif()
-
-if (UNIX AND NOT APPLE)
-  set(LLVM_EXPORTED_SYMBOL_FILE)
-  set(USE_VERSION_SCRIPT ${LLVM_HAVE_LINK_VERSION_SCRIPT})
-endif()
-
-if (LLVM_EXPORTED_SYMBOL_FILE)
-  add_custom_command(OUTPUT ${LLVM_EXPORTED_SYMBOL_FILE}
-                     COMMAND "${Python3_EXECUTABLE}"
-                       ARGS ${CMAKE_CURRENT_SOURCE_DIR}/linker-script-to-export-list.py
-                            ${LIBCLANG_VERSION_SCRIPT_FILE}
-                            ${LLVM_EXPORTED_SYMBOL_FILE}
-                     DEPENDS ${LIBCLANG_VERSION_SCRIPT_FILE})
 endif()
 
 if(LLVM_ENABLE_PIC OR (WIN32 AND NOT LIBCLANG_BUILD_STATIC))
@@ -132,6 +118,10 @@ add_clang_library(libclang ${ENABLE_SHARED} ${ENABLE_STATIC} INSTALL_WITH_TOOLCH
   ${LLVM_TARGETS_TO_BUILD}
   Core
   Support
+  # NOTE: The following were added to keep BUILD_SHARED_LIBS=TRUE working on
+  # Apple's downstream branch. They are not required upstream at the moment.
+  Option
+  FrontendOpenMP
   )
 
 if(ENABLE_STATIC)
@@ -165,21 +155,6 @@ if(ENABLE_SHARED)
         "-fmodules-ignore-macro=_CINDEX_LIB_"
         )
     endif()
-  endif()
-  if (USE_VERSION_SCRIPT)
-    target_link_options(libclang PRIVATE "-Wl,--version-script,${CMAKE_CURRENT_SOURCE_DIR}/libclang.map")
-    # The Solaris 11.4 linker supports a subset of GNU ld version scripts,
-    # but requires a special option to enable it.
-    if (${CMAKE_SYSTEM_NAME} MATCHES "SunOS")
-      target_link_options(libclang PRIVATE "-Wl,-z,gnu-version-script-compat")
-    endif()
-    # Ensure that libclang.so gets rebuilt when the linker script changes.
-    set_property(SOURCE ARCMigrate.cpp APPEND PROPERTY
-                 OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/libclang.map)
-
-    set_target_properties(libclang PROPERTIES
-                          VERSION ${LLVM_VERSION_MAJOR}.${LLVM_VERSION_MINOR}.${LLVM_VERSION_PATCH}${LLVM_VERSION_SUFFIX}
-                          SOVERSION ${CLANG_SONAME})
   endif()
 endif()
 

@@ -37,6 +37,14 @@ ASM_FUNCTION_AARCH64_RE = re.compile(
      r'.Lfunc_end[0-9]+:\n',
      flags=(re.M | re.S))
 
+ASM_FUNCTION_ARM64_RE = re.compile(
+     r'^_?(?P<func>[^:]+):[ \t]*;[ \t]*@(?P=func)\n'
+     r'(?:[ \t]+.cfi_startproc\n)?'
+     r'(?P<body>.*?)\n'
+     # Darwin doesn't rely on function end labels, so we look for cfi instead.
+     r'^[ \t]+.cfi_endproc\n',
+     flags=(re.M | re.S))
+
 ASM_FUNCTION_AMDGPU_RE = re.compile(
     r'^_?(?P<func>[^:]+):[ \t]*;+[ \t]*@"?(?P=func)"?\n[^:]*?'
     r'(?P<body>.*?)\n' # (body of the function)
@@ -374,6 +382,8 @@ def get_run_handler(triple):
       'i386': (scrub_asm_x86, ASM_FUNCTION_X86_RE),
       'arm64_32-apple-ios': (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_DARWIN_RE),
       'aarch64': (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_RE),
+      'arm64': (scrub_asm_arm_eabi, ASM_FUNCTION_ARM64_RE),
+      'arm64e': (scrub_asm_arm_eabi, ASM_FUNCTION_ARM64_RE),
       'aarch64-apple-darwin': (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_DARWIN_RE),
       'aarch64-apple-ios': (scrub_asm_arm_eabi, ASM_FUNCTION_AARCH64_DARWIN_RE),
       'hexagon': (scrub_asm_hexagon, ASM_FUNCTION_HEXAGON_RE),

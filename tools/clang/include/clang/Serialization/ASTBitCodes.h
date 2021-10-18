@@ -41,7 +41,7 @@ namespace serialization {
 /// Version 4 of AST files also requires that the version control branch and
 /// revision match exactly, since there is no backward compatibility of
 /// AST files at this time.
-const unsigned VERSION_MAJOR = 15;
+const unsigned VERSION_MAJOR = 14;
 
 /// AST file minor version number supported by this version of
 /// Clang.
@@ -176,10 +176,10 @@ const unsigned int NUM_PREDEF_SUBMODULE_IDS = 1;
 /// Source range/offset of a preprocessed entity.
 struct PPEntityOffset {
   /// Raw source location of beginning of range.
-  SourceLocation::UIntTy Begin;
+  unsigned Begin;
 
   /// Raw source location of end of range.
-  SourceLocation::UIntTy End;
+  unsigned End;
 
   /// Offset in the AST file relative to ModuleFile::MacroOffsetsBase.
   uint32_t BitOffset;
@@ -200,9 +200,9 @@ struct PPEntityOffset {
 /// Source range of a skipped preprocessor region
 struct PPSkippedRange {
   /// Raw source location of beginning of range.
-  SourceLocation::UIntTy Begin;
+  unsigned Begin;
   /// Raw source location of end of range.
-  SourceLocation::UIntTy End;
+  unsigned End;
 
   PPSkippedRange(SourceRange R)
       : Begin(R.getBegin().getRawEncoding()), End(R.getEnd().getRawEncoding()) {
@@ -240,7 +240,7 @@ struct UnderalignedInt64 {
 /// Source location and bit offset of a declaration.
 struct DeclOffset {
   /// Raw source location.
-  SourceLocation::UIntTy Loc = 0;
+  unsigned Loc = 0;
 
   /// Offset relative to the start of the DECLTYPES_BLOCK block. Keep
   /// structure alignment 32-bit and avoid padding gap because undefined
@@ -379,9 +379,6 @@ enum OptionsRecordTypes {
   /// Record code for the target options table.
   TARGET_OPTIONS,
 
-  /// Record code for the filesystem options table.
-  FILE_SYSTEM_OPTIONS,
-
   /// Record code for the headers search options table.
   HEADER_SEARCH_OPTIONS,
 
@@ -399,6 +396,12 @@ enum UnhashedControlBlockRecordTypes {
 
   /// Record code for the diagnostic options table.
   DIAGNOSTIC_OPTIONS,
+
+  /// Record code for the headers seach paths.
+  HEADER_SEARCH_PATHS,
+
+  /// Record code for the filesystem options table.
+  FILE_SYSTEM_OPTIONS,
 
   /// Record code for \#pragma diagnostic mappings.
   DIAG_PRAGMA_MAPPINGS,

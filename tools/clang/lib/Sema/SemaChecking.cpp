@@ -129,6 +129,20 @@ static bool checkArgCount(Sema &S, CallExpr *call, unsigned desiredArgCount) {
     << call->getArg(1)->getSourceRange();
 }
 
+static bool convertArgumentToType(Sema &S, Expr *&Value, QualType Ty) {
+  if (Value->isTypeDependent())
+    return false;
+
+  InitializedEntity Entity =
+    InitializedEntity::InitializeParameter(S.Context, Ty, false);
+  ExprResult Result =
+    S.PerformCopyInitialization(Entity, SourceLocation(), Value);
+  if (Result.isInvalid())
+    return true;
+  Value = Result.get();
+  return false;
+}
+
 /// Check that the first argument to __builtin_annotation is an integer
 /// and the second argument is a non-wide string literal.
 static bool SemaBuiltinAnnotation(Sema &S, CallExpr *TheCall) {
@@ -1315,6 +1329,299 @@ static bool SemaOpenCLBuiltinToAddr(Sema &S, unsigned BuiltinID,
   return false;
 }
 
+namespace {
+  enum PointerAuthOpKind {
+    PAO_Strip, PAO_Sign, PAO_Auth, PAO_SignGeneric, PAO_Discriminator,
+    PAO_BlendPointer, PAO_BlendInteger
+  };
+}
+
+static bool checkPointerAuthEnabled(Sema &S, Expr *E) {
+  if (S.getLangOpts().PointerAuthIntrinsics)
+    return false;
+
+  S.diagnosePointerAuthDisabled(E->getExprLoc(), E->getSourceRange());
+  return true;
+}
+
+void Sema::diagnosePointerAuthDisabled(SourceLocation loc, SourceRange range) {
+  if (!getLangOpts().SoftPointerAuth &&
+      !Context.getTargetInfo().isPointerAuthSupported()) {
+    Diag(loc, diag::err_ptrauth_disabled_target) << range;
+  } else {
+    Diag(loc, diag::err_ptrauth_disabled) << range;
+  }
+}
+
+static bool checkPointerAuthKey(Sema &S, Expr *&Arg) {
+  // Convert it to type 'int'.
+  if (convertArgumentToType(S, Arg, S.Context.IntTy))
+    return true;
+
+  // Value-dependent expressions are okay; wait for template instantiation.
+  if (Arg->isValueDependent())
+    return false;
+
+  unsigned KeyValue;
+  return S.checkConstantPointerAuthKey(Arg, KeyValue);
+}
+
+bool Sema::checkConstantPointerAuthKey(Expr *Arg, unsigned &Result) {
+  // Attempt to constant-evaluate the expression.
+  Optional<llvm::APSInt> KeyValue = Arg->getIntegerConstantExpr(Context);
+  if (!KeyValue) {
+    Diag(Arg->getExprLoc(), diag::err_expr_not_ice) << 0
+      << Arg->getSourceRange();
+    return true;
+  }
+
+  // Ask the target to validate the key parameter.
+  if (!Context.getTargetInfo().validatePointerAuthKey(*KeyValue)) {
+    llvm::SmallString<32> Value; {
+      llvm::raw_svector_ostream Str(Value);
+      Str << *KeyValue;
+    }
+
+    Diag(Arg->getExprLoc(), diag::err_ptrauth_invalid_key)
+      << Value << Arg->getSourceRange();
+    return true;
+  }
+
+  Result = KeyValue->getZExtValue();
+  return false;
+}
+
+static std::pair<const ValueDecl *, CharUnits>
+findConstantBaseAndOffset(Sema &S, Expr *E) {
+  // Must evaluate as a pointer.
+  Expr::EvalResult result;
+  if (!E->EvaluateAsRValue(result, S.Context) ||
+      !result.Val.isLValue())
+    return std::make_pair(nullptr, CharUnits());
+
+  // Base must be a declaration and can't be weakly imported.
+  auto baseDecl =
+    result.Val.getLValueBase().dyn_cast<const ValueDecl *>();
+  if (!baseDecl || baseDecl->hasAttr<WeakRefAttr>())
+    return std::make_pair(nullptr, CharUnits());
+
+  return std::make_pair(baseDecl, result.Val.getLValueOffset());
+}
+
+static bool checkPointerAuthValue(Sema &S, Expr *&Arg,
+                                  PointerAuthOpKind OpKind,
+                                  bool RequireConstant = false) {
+  if (Arg->hasPlaceholderType()) {
+    ExprResult R = S.CheckPlaceholderExpr(Arg);
+    if (R.isInvalid()) return true;
+    Arg = R.get();
+  }
+
+  auto allowsPointer = [](PointerAuthOpKind OpKind) {
+    return OpKind != PAO_BlendInteger;
+  };
+  auto allowsInteger = [](PointerAuthOpKind OpKind) {
+    return OpKind == PAO_Discriminator ||
+           OpKind == PAO_BlendInteger ||
+           OpKind == PAO_SignGeneric;
+  };
+
+  // Require the value to have the right range of type.
+  QualType ExpectedTy;
+  if (allowsPointer(OpKind) && Arg->getType()->isPointerType()) {
+    ExpectedTy = Arg->getType().getUnqualifiedType();
+  } else if (allowsPointer(OpKind) && Arg->getType()->isNullPtrType()) {
+    ExpectedTy = S.Context.VoidPtrTy;
+  } else if (allowsInteger(OpKind) &&
+             Arg->getType()->isIntegralOrUnscopedEnumerationType()) {
+    ExpectedTy = S.Context.getUIntPtrType();
+
+  // Diagnose the failures.
+  } else {
+    S.Diag(Arg->getExprLoc(), diag::err_ptrauth_value_bad_type)
+      << unsigned(OpKind == PAO_Discriminator ? 1 :
+                  OpKind == PAO_BlendPointer ? 2 :
+                  OpKind == PAO_BlendInteger ? 3 : 0)
+      << unsigned(allowsInteger(OpKind) ?
+                    (allowsPointer(OpKind) ? 2 : 1) : 0)
+      << Arg->getType()
+      << Arg->getSourceRange();
+    return true;
+  }
+
+  // Convert to that type.  This should just be an lvalue-to-rvalue
+  // conversion.
+  if (convertArgumentToType(S, Arg, ExpectedTy))
+    return true;
+
+  if (!RequireConstant) {
+    // Warn about null pointers for non-generic sign and auth operations.
+    if ((OpKind == PAO_Sign || OpKind == PAO_Auth) &&
+        Arg->isNullPointerConstant(S.Context, Expr::NPC_ValueDependentIsNull)) {
+      S.Diag(Arg->getExprLoc(),
+             OpKind == PAO_Sign ? diag::warn_ptrauth_sign_null_pointer
+                                : diag::warn_ptrauth_auth_null_pointer)
+        << Arg->getSourceRange();
+    }
+
+    return false;
+  }
+
+  // Perform special checking on the arguments to ptrauth_sign_constant.
+
+  // The main argument.
+  if (OpKind == PAO_Sign) {
+    // Require the value we're signing to have a special form.
+    auto result = findConstantBaseAndOffset(S, Arg);
+    bool invalid;
+
+    // Must be rooted in a declaration reference.
+    if (!result.first) {
+      invalid = true;
+
+    // If it's a function declaration, we can't have an offset.
+    } else if (isa<FunctionDecl>(result.first)) {
+      invalid = !result.second.isZero();
+
+    // Otherwise we're fine.
+    } else {
+      invalid = false;
+    }
+
+    if (invalid) {
+      S.Diag(Arg->getExprLoc(), diag::err_ptrauth_bad_constant_pointer);
+    }
+    return invalid;
+  }
+
+  // The discriminator argument.
+  assert(OpKind == PAO_Discriminator);
+
+  // Must be a pointer or integer or blend thereof.
+  Expr *pointer = nullptr;
+  Expr *integer = nullptr;
+  if (auto call = dyn_cast<CallExpr>(Arg->IgnoreParens())) {
+    if (call->getBuiltinCallee() ==
+          Builtin::BI__builtin_ptrauth_blend_discriminator) {
+      pointer = call->getArg(0);
+      integer = call->getArg(1);
+    }
+  }
+  if (!pointer && !integer) {
+    if (Arg->getType()->isPointerType())
+      pointer = Arg;
+    else
+      integer = Arg;
+  }
+
+  // Check the pointer.
+  bool invalid = false;
+  if (pointer) {
+    assert(pointer->getType()->isPointerType());
+
+    // TODO: if we're initializing a global, check that the address is
+    // somehow related to what we're initializing.  This probably will
+    // never really be feasible and we'll have to catch it at link-time.
+    auto result = findConstantBaseAndOffset(S, pointer);
+    if (!result.first || !isa<VarDecl>(result.first)) {
+      invalid = true;
+    }
+  }
+
+  // Check the integer.
+  if (integer) {
+    assert(integer->getType()->isIntegerType());
+    if (!integer->isEvaluatable(S.Context))
+      invalid = true;
+  }
+
+  if (invalid) {
+    S.Diag(Arg->getExprLoc(), diag::err_ptrauth_bad_constant_discriminator);
+  }
+  return invalid;
+}
+
+static ExprResult SemaPointerAuthStrip(Sema &S, CallExpr *Call) {
+  if (checkArgCount(S, Call, 2)) return ExprError();
+  if (checkPointerAuthEnabled(S, Call)) return ExprError();
+  if (checkPointerAuthValue(S, Call->getArgs()[0], PAO_Strip) |
+      checkPointerAuthKey(S, Call->getArgs()[1]))
+    return ExprError();
+
+  Call->setType(Call->getArgs()[0]->getType());
+  return Call;
+}
+
+static ExprResult SemaPointerAuthBlendDiscriminator(Sema &S, CallExpr *Call) {
+  if (checkArgCount(S, Call, 2)) return ExprError();
+  if (checkPointerAuthEnabled(S, Call)) return ExprError();
+  if (checkPointerAuthValue(S, Call->getArgs()[0], PAO_BlendPointer) |
+      checkPointerAuthValue(S, Call->getArgs()[1], PAO_BlendInteger))
+    return ExprError();
+
+  Call->setType(S.Context.getUIntPtrType());
+  return Call;
+}
+
+static ExprResult SemaPointerAuthSignGenericData(Sema &S, CallExpr *Call) {
+  if (checkArgCount(S, Call, 2)) return ExprError();
+  if (checkPointerAuthEnabled(S, Call)) return ExprError();
+  if (checkPointerAuthValue(S, Call->getArgs()[0], PAO_SignGeneric) |
+      checkPointerAuthValue(S, Call->getArgs()[1], PAO_Discriminator))
+    return ExprError();
+
+  Call->setType(S.Context.getUIntPtrType());
+  return Call;
+}
+
+static ExprResult SemaPointerAuthSignOrAuth(Sema &S, CallExpr *Call,
+                                            PointerAuthOpKind OpKind,
+                                            bool RequireConstant) {
+  if (checkArgCount(S, Call, 3)) return ExprError();
+  if (checkPointerAuthEnabled(S, Call)) return ExprError();
+  if (checkPointerAuthValue(S, Call->getArgs()[0], OpKind, RequireConstant) |
+      checkPointerAuthKey(S, Call->getArgs()[1]) |
+      checkPointerAuthValue(S, Call->getArgs()[2], PAO_Discriminator,
+                            RequireConstant))
+    return ExprError();
+
+  Call->setType(Call->getArgs()[0]->getType());
+  return Call;
+}
+
+static ExprResult SemaPointerAuthAuthAndResign(Sema &S, CallExpr *Call) {
+  if (checkArgCount(S, Call, 5)) return ExprError();
+  if (checkPointerAuthEnabled(S, Call)) return ExprError();
+  if (checkPointerAuthValue(S, Call->getArgs()[0], PAO_Auth) |
+      checkPointerAuthKey(S, Call->getArgs()[1]) |
+      checkPointerAuthValue(S, Call->getArgs()[2], PAO_Discriminator) |
+      checkPointerAuthKey(S, Call->getArgs()[3]) |
+      checkPointerAuthValue(S, Call->getArgs()[4], PAO_Discriminator))
+    return ExprError();
+
+  Call->setType(Call->getArgs()[0]->getType());
+  return Call;
+}
+
+static ExprResult SemaPointerAuthStringDiscriminator(Sema &S, CallExpr *call) {
+  if (checkPointerAuthEnabled(S, call)) return ExprError();
+
+  // We've already performed normal call type-checking.
+  Expr *arg = call->getArgs()[0]->IgnoreParenImpCasts();
+
+  // Operand must be an ordinary or UTF-8 string literal.
+  auto literal = dyn_cast<StringLiteral>(arg);
+  if (!literal || literal->getCharByteWidth() != 1) {
+    S.Diag(arg->getExprLoc(), diag::err_ptrauth_string_not_literal)
+      << (literal ? 1 : 0)
+      << arg->getSourceRange();
+    return ExprError();
+  }
+
+  return call;
+}
+
+
 static ExprResult SemaBuiltinLaunder(Sema &S, CallExpr *TheCall) {
   if (checkArgCount(S, TheCall, 1))
     return ExprError();
@@ -1553,10 +1860,6 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
   case Builtin::BI__builtin_alloca:
     Diag(TheCall->getBeginLoc(), diag::warn_alloca)
         << TheCall->getDirectCallee();
-    break;
-  case Builtin::BI__arithmetic_fence:
-    if (SemaBuiltinArithmeticFence(TheCall))
-      return ExprError();
     break;
   case Builtin::BI__assume:
   case Builtin::BI__builtin_assume:
@@ -1876,6 +2179,25 @@ Sema::CheckBuiltinFunctionCall(FunctionDecl *FDecl, unsigned BuiltinID,
 
     TheCall->setType(Context.VoidPtrTy);
     break;
+  case Builtin::BI__builtin_ptrauth_strip:
+    return SemaPointerAuthStrip(*this, TheCall);
+  case Builtin::BI__builtin_ptrauth_blend_discriminator:
+    return SemaPointerAuthBlendDiscriminator(*this, TheCall);
+  case Builtin::BI__builtin_ptrauth_sign_constant:
+    return SemaPointerAuthSignOrAuth(*this, TheCall, PAO_Sign,
+                                     /*constant*/ true);
+  case Builtin::BI__builtin_ptrauth_sign_unauthenticated:
+    return SemaPointerAuthSignOrAuth(*this, TheCall, PAO_Sign,
+                                     /*constant*/ false);
+  case Builtin::BI__builtin_ptrauth_auth:
+    return SemaPointerAuthSignOrAuth(*this, TheCall, PAO_Auth,
+                                     /*constant*/ false);
+  case Builtin::BI__builtin_ptrauth_sign_generic_data:
+    return SemaPointerAuthSignGenericData(*this, TheCall);
+  case Builtin::BI__builtin_ptrauth_auth_and_resign:
+    return SemaPointerAuthAuthAndResign(*this, TheCall);
+  case Builtin::BI__builtin_ptrauth_string_discriminator:
+    return SemaPointerAuthStringDiscriminator(*this, TheCall);
   // OpenCL v2.0, s6.13.16 - Pipe functions
   case Builtin::BIread_pipe:
   case Builtin::BIwrite_pipe:
@@ -3265,70 +3587,22 @@ static bool isPPC_64Builtin(unsigned BuiltinID) {
   case PPC::BI__builtin_divde:
   case PPC::BI__builtin_divdeu:
   case PPC::BI__builtin_bpermd:
-  case PPC::BI__builtin_ppc_ldarx:
-  case PPC::BI__builtin_ppc_stdcx:
-  case PPC::BI__builtin_ppc_tdw:
-  case PPC::BI__builtin_ppc_trapd:
-  case PPC::BI__builtin_ppc_cmpeqb:
-  case PPC::BI__builtin_ppc_setb:
-  case PPC::BI__builtin_ppc_mulhd:
-  case PPC::BI__builtin_ppc_mulhdu:
-  case PPC::BI__builtin_ppc_maddhd:
-  case PPC::BI__builtin_ppc_maddhdu:
-  case PPC::BI__builtin_ppc_maddld:
-  case PPC::BI__builtin_ppc_load8r:
-  case PPC::BI__builtin_ppc_store8r:
-  case PPC::BI__builtin_ppc_insert_exp:
-  case PPC::BI__builtin_ppc_extract_sig:
     return true;
   }
   return false;
 }
 
 static bool SemaFeatureCheck(Sema &S, CallExpr *TheCall,
-                             StringRef FeatureToCheck, unsigned DiagID,
-                             StringRef DiagArg = "") {
-  if (S.Context.getTargetInfo().hasFeature(FeatureToCheck))
-    return false;
-
-  if (DiagArg.empty())
-    S.Diag(TheCall->getBeginLoc(), DiagID) << TheCall->getSourceRange();
-  else
-    S.Diag(TheCall->getBeginLoc(), DiagID)
-        << DiagArg << TheCall->getSourceRange();
-
-  return true;
-}
-
-/// Returns true if the argument consists of one contiguous run of 1s with any
-/// number of 0s on either side. The 1s are allowed to wrap from LSB to MSB, so
-/// 0x000FFF0, 0x0000FFFF, 0xFF0000FF, 0x0 are all runs. 0x0F0F0000 is not,
-/// since all 1s are not contiguous.
-bool Sema::SemaValueIsRunOfOnes(CallExpr *TheCall, unsigned ArgNum) {
-  llvm::APSInt Result;
-  // We can't check the value of a dependent argument.
-  Expr *Arg = TheCall->getArg(ArgNum);
-  if (Arg->isTypeDependent() || Arg->isValueDependent())
-    return false;
-
-  // Check constant-ness first.
-  if (SemaBuiltinConstantArg(TheCall, ArgNum, Result))
-    return true;
-
-  // Check contiguous run of 1s, 0xFF0000FF is also a run of 1s.
-  if (Result.isShiftedMask() || (~Result).isShiftedMask())
-    return false;
-
-  return Diag(TheCall->getBeginLoc(),
-              diag::err_argument_not_contiguous_bit_field)
-         << ArgNum << Arg->getSourceRange();
+                             StringRef FeatureToCheck, unsigned DiagID) {
+  if (!S.Context.getTargetInfo().hasFeature(FeatureToCheck))
+    return S.Diag(TheCall->getBeginLoc(), DiagID) << TheCall->getSourceRange();
+  return false;
 }
 
 bool Sema::CheckPPCBuiltinFunctionCall(const TargetInfo &TI, unsigned BuiltinID,
                                        CallExpr *TheCall) {
   unsigned i = 0, l = 0, u = 0;
   bool IsTarget64Bit = TI.getTypeWidth(TI.getIntPtrType()) == 64;
-  llvm::APSInt Result;
 
   if (isPPC_64Builtin(BuiltinID) && !IsTarget64Bit)
     return Diag(TheCall->getBeginLoc(), diag::err_64_bit_builtin_32_bit_tgt)
@@ -3364,17 +3638,17 @@ bool Sema::CheckPPCBuiltinFunctionCall(const TargetInfo &TI, unsigned BuiltinID,
   case PPC::BI__builtin_divde:
   case PPC::BI__builtin_divdeu:
     return SemaFeatureCheck(*this, TheCall, "extdiv",
-                            diag::err_ppc_builtin_only_on_arch, "7");
+                            diag::err_ppc_builtin_only_on_pwr7);
   case PPC::BI__builtin_bpermd:
     return SemaFeatureCheck(*this, TheCall, "bpermd",
-                            diag::err_ppc_builtin_only_on_arch, "7");
+                            diag::err_ppc_builtin_only_on_pwr7);
   case PPC::BI__builtin_unpack_vector_int128:
     return SemaFeatureCheck(*this, TheCall, "vsx",
-                            diag::err_ppc_builtin_only_on_arch, "7") ||
+                            diag::err_ppc_builtin_only_on_pwr7) ||
            SemaBuiltinConstantArgRange(TheCall, 1, 0, 1);
   case PPC::BI__builtin_pack_vector_int128:
     return SemaFeatureCheck(*this, TheCall, "vsx",
-                            diag::err_ppc_builtin_only_on_arch, "7");
+                            diag::err_ppc_builtin_only_on_pwr7);
   case PPC::BI__builtin_altivec_vgnb:
      return SemaBuiltinConstantArgRange(TheCall, 1, 2, 7);
   case PPC::BI__builtin_altivec_vec_replace_elt:
@@ -3393,58 +3667,6 @@ bool Sema::CheckPPCBuiltinFunctionCall(const TargetInfo &TI, unsigned BuiltinID,
      return SemaBuiltinConstantArgRange(TheCall, 2, 0, 7);
   case PPC::BI__builtin_vsx_xxpermx:
      return SemaBuiltinConstantArgRange(TheCall, 3, 0, 7);
-  case PPC::BI__builtin_ppc_tw:
-  case PPC::BI__builtin_ppc_tdw:
-    return SemaBuiltinConstantArgRange(TheCall, 2, 1, 31);
-  case PPC::BI__builtin_ppc_cmpeqb:
-  case PPC::BI__builtin_ppc_setb:
-  case PPC::BI__builtin_ppc_maddhd:
-  case PPC::BI__builtin_ppc_maddhdu:
-  case PPC::BI__builtin_ppc_maddld:
-    return SemaFeatureCheck(*this, TheCall, "isa-v30-instructions",
-                            diag::err_ppc_builtin_only_on_arch, "9");
-  case PPC::BI__builtin_ppc_cmprb:
-    return SemaFeatureCheck(*this, TheCall, "isa-v30-instructions",
-                            diag::err_ppc_builtin_only_on_arch, "9") ||
-           SemaBuiltinConstantArgRange(TheCall, 0, 0, 1);
-  // For __rlwnm, __rlwimi and __rldimi, the last parameter mask must
-  // be a constant that represents a contiguous bit field.
-  case PPC::BI__builtin_ppc_rlwnm:
-    return SemaBuiltinConstantArg(TheCall, 1, Result) ||
-           SemaValueIsRunOfOnes(TheCall, 2);
-  case PPC::BI__builtin_ppc_rlwimi:
-  case PPC::BI__builtin_ppc_rldimi:
-    return SemaBuiltinConstantArg(TheCall, 2, Result) ||
-           SemaValueIsRunOfOnes(TheCall, 3);
-  case PPC::BI__builtin_ppc_extract_exp:
-  case PPC::BI__builtin_ppc_extract_sig:
-  case PPC::BI__builtin_ppc_insert_exp:
-    return SemaFeatureCheck(*this, TheCall, "power9-vector",
-                            diag::err_ppc_builtin_only_on_arch, "9");
-  case PPC::BI__builtin_ppc_mtfsb0:
-  case PPC::BI__builtin_ppc_mtfsb1:
-    return SemaBuiltinConstantArgRange(TheCall, 0, 0, 31);
-  case PPC::BI__builtin_ppc_mtfsf:
-    return SemaBuiltinConstantArgRange(TheCall, 0, 0, 255);
-  case PPC::BI__builtin_ppc_mtfsfi:
-    return SemaBuiltinConstantArgRange(TheCall, 0, 0, 7) ||
-           SemaBuiltinConstantArgRange(TheCall, 1, 0, 15);
-  case PPC::BI__builtin_ppc_alignx:
-    return SemaBuiltinConstantArgPower2(TheCall, 0);
-  case PPC::BI__builtin_ppc_rdlam:
-    return SemaValueIsRunOfOnes(TheCall, 2);
-  case PPC::BI__builtin_ppc_icbt:
-  case PPC::BI__builtin_ppc_sthcx:
-  case PPC::BI__builtin_ppc_stbcx:
-  case PPC::BI__builtin_ppc_lharx:
-  case PPC::BI__builtin_ppc_lbarx:
-    return SemaFeatureCheck(*this, TheCall, "isa-v207-instructions",
-                            diag::err_ppc_builtin_only_on_arch, "8");
-  case PPC::BI__builtin_vsx_ldrmb:
-  case PPC::BI__builtin_vsx_strmb:
-    return SemaFeatureCheck(*this, TheCall, "isa-v207-instructions",
-                            diag::err_ppc_builtin_only_on_arch, "8") ||
-           SemaBuiltinConstantArgRange(TheCall, 1, 1, 16);
 #define CUSTOM_BUILTIN(Name, Intr, Types, Acc) \
   case PPC::BI__builtin_##Name: \
     return SemaBuiltinPPCMMACall(TheCall, Types);
@@ -3783,11 +4005,6 @@ bool Sema::CheckSystemZBuiltinFunctionCall(unsigned BuiltinID,
   case SystemZ::BI__builtin_s390_vfmaxdb: i = 2; l = 0; u = 15; break;
   case SystemZ::BI__builtin_s390_vsld: i = 2; l = 0; u = 7; break;
   case SystemZ::BI__builtin_s390_vsrd: i = 2; l = 0; u = 7; break;
-  case SystemZ::BI__builtin_s390_vclfnhs:
-  case SystemZ::BI__builtin_s390_vclfnls:
-  case SystemZ::BI__builtin_s390_vcfn:
-  case SystemZ::BI__builtin_s390_vcnf: i = 1; l = 0; u = 15; break;
-  case SystemZ::BI__builtin_s390_vcrnfs: i = 2; l = 0; u = 15; break;
   }
   return SemaBuiltinConstantArgRange(TheCall, i, l, u);
 }
@@ -6655,29 +6872,6 @@ bool Sema::SemaBuiltinPrefetch(CallExpr *TheCall) {
     if (SemaBuiltinConstantArgRange(TheCall, i, 0, i == 1 ? 1 : 3))
       return true;
 
-  return false;
-}
-
-/// SemaBuiltinArithmeticFence - Handle __arithmetic_fence.
-bool Sema::SemaBuiltinArithmeticFence(CallExpr *TheCall) {
-  if (!Context.getTargetInfo().checkArithmeticFenceSupported())
-    return Diag(TheCall->getBeginLoc(), diag::err_builtin_target_unsupported)
-           << SourceRange(TheCall->getBeginLoc(), TheCall->getEndLoc());
-  if (checkArgCount(*this, TheCall, 1))
-    return true;
-  Expr *Arg = TheCall->getArg(0);
-  if (Arg->isInstantiationDependent())
-    return false;
-
-  QualType ArgTy = Arg->getType();
-  if (!ArgTy->hasFloatingRepresentation())
-    return Diag(TheCall->getEndLoc(), diag::err_typecheck_expect_flt_or_vector)
-           << ArgTy;
-  if (Arg->isLValue()) {
-    ExprResult FirstArg = DefaultLvalueConversion(Arg);
-    TheCall->setArg(0, FirstArg.get());
-  }
-  TheCall->setType(TheCall->getArg(0)->getType());
   return false;
 }
 
@@ -10208,6 +10402,9 @@ struct SearchNonTrivialToCopyField
   void visitARCWeak(QualType FT, SourceLocation SL) {
     S.DiagRuntimeBehavior(SL, E, S.PDiag(diag::note_nontrivial_field) << 0);
   }
+  void visitPtrAuth(QualType FT, SourceLocation SL) {
+    S.DiagRuntimeBehavior(SL, E, S.PDiag(diag::note_nontrivial_field) << 0);
+  }
   void visitStruct(QualType FT, SourceLocation SL) {
     for (const FieldDecl *FD : FT->castAs<RecordType>()->getDecl()->fields())
       visit(FD->getType(), FD->getLocation());
@@ -10735,9 +10932,8 @@ void CheckFreeArgumentsAddressof(Sema &S, const std::string &CalleeName,
                                  const UnaryOperator *UnaryExpr) {
   if (const auto *Lvalue = dyn_cast<DeclRefExpr>(UnaryExpr->getSubExpr())) {
     const Decl *D = Lvalue->getDecl();
-    if (isa<DeclaratorDecl>(D))
-      if (!dyn_cast<DeclaratorDecl>(D)->getType()->isReferenceType())
-        return CheckFreeArgumentsOnLvalue(S, CalleeName, UnaryExpr, D);
+    if (isa<VarDecl, FunctionDecl>(D))
+      return CheckFreeArgumentsOnLvalue(S, CalleeName, UnaryExpr, D);
   }
 
   if (const auto *Lvalue = dyn_cast<MemberExpr>(UnaryExpr->getSubExpr()))
@@ -12579,13 +12775,15 @@ static void CheckImplicitConversion(Sema &S, Expr *E, QualType T,
     checkObjCDictionaryLiteral(S, QualType(Target, 0), DictionaryLiteral);
 
   // Strip vector types.
-  if (isa<VectorType>(Source)) {
-    if (Target->isVLSTBuiltinType() &&
-        (S.Context.areCompatibleSveTypes(QualType(Target, 0),
-                                         QualType(Source, 0)) ||
-         S.Context.areLaxCompatibleSveTypes(QualType(Target, 0),
-                                            QualType(Source, 0))))
-      return;
+  if (const auto *SourceVT = dyn_cast<VectorType>(Source)) {
+    if (Target->isVLSTBuiltinType()) {
+      auto SourceVectorKind = SourceVT->getVectorKind();
+      if (SourceVectorKind == VectorType::SveFixedLengthDataVector ||
+          SourceVectorKind == VectorType::SveFixedLengthPredicateVector ||
+          (SourceVectorKind == VectorType::GenericVector &&
+           S.Context.getTypeSize(Source) == S.getLangOpts().ArmSveVectorBits))
+        return;
+    }
 
     if (!isa<VectorType>(Target)) {
       if (S.SourceMgr.isInSystemMacro(CC))
@@ -14579,8 +14777,7 @@ static getBaseAlignmentAndOffsetFromLValue(const Expr *E, ASTContext &Ctx) {
   case Stmt::MemberExprClass: {
     auto *ME = cast<MemberExpr>(E);
     auto *FD = dyn_cast<FieldDecl>(ME->getMemberDecl());
-    if (!FD || FD->getType()->isReferenceType() ||
-        FD->getParent()->isInvalidDecl())
+    if (!FD || FD->getType()->isReferenceType())
       break;
     Optional<std::pair<CharUnits, CharUnits>> P;
     if (ME->isArrow())

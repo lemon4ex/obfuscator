@@ -68,8 +68,9 @@ protected:
 
 public:
   // allocate space for exactly one operand
-  void *operator new(size_t S) { return User::operator new(S, 1); }
-  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+  void *operator new(size_t s) {
+    return User::operator new(s, 1);
+  }
 
   /// Transparently provide more efficient getOperand methods.
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
@@ -202,8 +203,9 @@ protected:
 
 public:
   // allocate space for exactly two operands
-  void *operator new(size_t S) { return User::operator new(S, 2); }
-  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+  void *operator new(size_t s) {
+    return User::operator new(s, 2);
+  }
 
   /// Transparently provide more efficient getOperand methods.
   DECLARE_TRANSPARENT_OPERAND_ACCESSORS(Value);
@@ -767,8 +769,9 @@ protected:
 
 public:
   // allocate space for exactly two operands
-  void *operator new(size_t S) { return User::operator new(S, 2); }
-  void operator delete(void *Ptr) { User::operator delete(Ptr); }
+  void *operator new(size_t s) {
+    return User::operator new(s, 2);
+  }
 
   /// Construct a compare instruction, given the opcode, the predicate and
   /// the two operands.  Optionally (if InstBefore is specified) insert the
@@ -1558,6 +1561,15 @@ public:
     setAttributes(PAL);
   }
 
+  /// Removes noundef and other attributes that imply undefined behavior if a
+  /// `undef` or `poison` value is passed from the given argument.
+  void removeParamUndefImplyingAttrs(unsigned ArgNo) {
+    assert(ArgNo < getNumArgOperands() && "Out of bounds");
+    AttributeList PAL = getAttributes();
+    PAL = PAL.removeParamUndefImplyingAttributes(getContext(), ArgNo);
+    setAttributes(PAL);
+  }
+
   /// adds the dereferenceable attribute to the list of attributes.
   void addDereferenceableAttr(unsigned i, uint64_t Bytes) {
     AttributeList PAL = getAttributes();
@@ -1716,29 +1728,14 @@ public:
 
   /// Extract the byval type for a call or parameter.
   Type *getParamByValType(unsigned ArgNo) const {
-    if (auto *Ty = Attrs.getParamByValType(ArgNo))
-      return Ty;
-    if (const Function *F = getCalledFunction())
-      return F->getAttributes().getParamByValType(ArgNo);
-    return nullptr;
+    Type *Ty = Attrs.getParamByValType(ArgNo);
+    return Ty ? Ty : getArgOperand(ArgNo)->getType()->getPointerElementType();
   }
 
   /// Extract the preallocated type for a call or parameter.
   Type *getParamPreallocatedType(unsigned ArgNo) const {
-    if (auto *Ty = Attrs.getParamPreallocatedType(ArgNo))
-      return Ty;
-    if (const Function *F = getCalledFunction())
-      return F->getAttributes().getParamPreallocatedType(ArgNo);
-    return nullptr;
-  }
-
-  /// Extract the preallocated type for a call or parameter.
-  Type *getParamInAllocaType(unsigned ArgNo) const {
-    if (auto *Ty = Attrs.getParamInAllocaType(ArgNo))
-      return Ty;
-    if (const Function *F = getCalledFunction())
-      return F->getAttributes().getParamInAllocaType(ArgNo);
-    return nullptr;
+    Type *Ty = Attrs.getParamPreallocatedType(ArgNo);
+    return Ty ? Ty : getArgOperand(ArgNo)->getType()->getPointerElementType();
   }
 
   /// Extract the number of dereferenceable bytes for a call or
@@ -2027,7 +2024,8 @@ public:
   bool hasClobberingOperandBundles() const {
     for (auto &BOI : bundle_op_infos()) {
       if (BOI.Tag->second == LLVMContext::OB_deopt ||
-          BOI.Tag->second == LLVMContext::OB_funclet)
+          BOI.Tag->second == LLVMContext::OB_funclet ||
+          BOI.Tag->second == LLVMContext::OB_ptrauth)
         continue;
 
       // This instruction has an operand bundle that is not known to us.

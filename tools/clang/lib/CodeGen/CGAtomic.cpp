@@ -85,7 +85,7 @@ namespace {
             (C.toCharUnitsFromBits(OrigBFI.Offset) / lvalue.getAlignment()) *
             lvalue.getAlignment();
         VoidPtrAddr = CGF.Builder.CreateConstGEP1_64(
-            CGF.Int8Ty, VoidPtrAddr, OffsetInChars.getQuantity());
+            VoidPtrAddr, OffsetInChars.getQuantity());
         auto Addr = CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(
             VoidPtrAddr,
             CGF.Builder.getIntNTy(AtomicSizeInBits)->getPointerTo(),

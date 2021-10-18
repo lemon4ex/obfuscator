@@ -2663,6 +2663,8 @@ static bool mergeDeclAttribute(Sema &S, NamedDecl *D,
             AMK == Sema::AMK_ProtocolImplementation ||
             AMK == Sema::AMK_OptionalProtocolImplementation))
     NewAttr = nullptr;
+  else if (isa<SwiftPrivateAttr>(Attr) && AMK == Sema::AMK_Override)
+    NewAttr = nullptr;
   else if (const auto *UA = dyn_cast<UuidAttr>(Attr))
     NewAttr = S.mergeUuidAttr(D, *UA, UA->getGuid(), UA->getGuidDecl());
   else if (const auto *IMA = dyn_cast<WebAssemblyImportModuleAttr>(Attr))
@@ -6424,11 +6426,7 @@ void Sema::deduceOpenCLAddressSpace(ValueDecl *Decl) {
     if (Type->isSamplerT() || Type->isVoidType())
       return;
     LangAS ImplAS = LangAS::opencl_private;
-    // OpenCL C v3.0 s6.7.8 - For OpenCL C 2.0 or with the
-    // __opencl_c_program_scope_global_variables feature, the address space
-    // for a variable at program scope or a static or extern variable inside
-    // a function are inferred to be __global.
-    if (getOpenCLOptions().areProgramScopeVariablesSupported(getLangOpts()) &&
+    if ((getLangOpts().OpenCLCPlusPlus || getLangOpts().OpenCLVersion >= 200) &&
         Var->hasGlobalStorage())
       ImplAS = LangAS::opencl_global;
     // If the original type from a decayed type is an array type and that array
@@ -8022,16 +8020,23 @@ void Sema::CheckVariableDeclarationType(VarDecl *NewVD) {
       }
     }
 
+    // OpenCL C v1.2 s6.5 - All program scope variables must be declared in the
+    // __constant address space.
+    // OpenCL C v2.0 s6.5.1 - Variables defined at program scope and static
+    // variables inside a function can also be declared in the global
+    // address space.
+    // C++ for OpenCL inherits rule from OpenCL C v2.0.
     // FIXME: Adding local AS in C++ for OpenCL might make sense.
     if (NewVD->isFileVarDecl() || NewVD->isStaticLocal() ||
         NewVD->hasExternalStorage()) {
-      if (!T->isSamplerT() && !T->isDependentType() &&
+      if (!T->isSamplerT() &&
+          !T->isDependentType() &&
           !(T.getAddressSpace() == LangAS::opencl_constant ||
             (T.getAddressSpace() == LangAS::opencl_global &&
-             getOpenCLOptions().areProgramScopeVariablesSupported(
-                 getLangOpts())))) {
+             (getLangOpts().OpenCLVersion == 200 ||
+              getLangOpts().OpenCLCPlusPlus)))) {
         int Scope = NewVD->isStaticLocal() | NewVD->hasExternalStorage() << 1;
-        if (getOpenCLOptions().areProgramScopeVariablesSupported(getLangOpts()))
+        if (getLangOpts().OpenCLVersion == 200 || getLangOpts().OpenCLCPlusPlus)
           Diag(NewVD->getLocation(), diag::err_opencl_global_invalid_addr_space)
               << Scope << "global or constant";
         else
@@ -8819,7 +8824,7 @@ static void checkIsValidOpenCLKernelParameter(
     // OpenCL v3.0 s6.11.a:
     // A kernel function argument cannot be declared as a pointer to a pointer
     // type. [...] This restriction only applies to OpenCL C 1.2 or below.
-    if (S.getLangOpts().OpenCLVersion <= 120 &&
+    if (S.getLangOpts().OpenCLVersion < 120 &&
         !S.getLangOpts().OpenCLCPlusPlus) {
       S.Diag(Param->getLocation(), diag::err_opencl_ptrptr_kernel_param);
       D.setInvalidType();
@@ -12103,6 +12108,12 @@ struct DiagNonTrivalCUnionCopyVisitor
         asDerived().visit(FD->getType(), FD, InNonTrivialUnion);
   }
 
+  void visitPtrAuth(QualType QT, const FieldDecl *FD, bool InNonTrivialUnion) {
+    if (InNonTrivialUnion)
+      S.Diag(FD->getLocation(), diag::note_non_trivial_c_union)
+          << 1 << 2 << QT << FD->getName();
+  }
+
   void preVisit(QualType::PrimitiveCopyKind PCK, QualType QT,
                 const FieldDecl *FD, bool InNonTrivialUnion) {}
   void visitTrivial(QualType QT, const FieldDecl *FD, bool InNonTrivialUnion) {}
@@ -13307,6 +13318,16 @@ void Sema::CheckCompleteVariableDeclaration(VarDecl *var) {
     CheckCompleteDecompositionDeclaration(DD);
 }
 
+/// Determines if a variable's alignment is dependent.
+static bool hasDependentAlignment(VarDecl *VD) {
+  if (VD->getType()->isDependentType())
+    return true;
+  for (auto *I : VD->specific_attrs<AlignedAttr>())
+    if (I->isAlignmentDependent())
+      return true;
+  return false;
+}
+
 /// Check if VD needs to be dllexport/dllimport due to being in a
 /// dllexport/import function.
 void Sema::CheckStaticLocalForDllExport(VarDecl *VD) {
@@ -13395,7 +13416,8 @@ void Sema::FinalizeDeclaration(Decl *ThisDecl) {
   if (unsigned MaxAlign = Context.getTargetInfo().getMaxTLSAlign()) {
     // Protect the check so that it's not performed on dependent types and
     // dependent alignments (we can't determine the alignment in that case).
-    if (VD->getTLSKind() && !VD->hasDependentAlignment()) {
+    if (VD->getTLSKind() && !hasDependentAlignment(VD) &&
+        !VD->isInvalidDecl()) {
       CharUnits MaxAlignChars = Context.toCharUnitsFromBits(MaxAlign);
       if (Context.getDeclAlign(VD) > MaxAlignChars) {
         Diag(VD->getLocation(), diag::err_tls_var_aligned_over_maximum)
@@ -13868,10 +13890,9 @@ void Sema::DiagnoseSizeOfParametersAndReturnValue(
   }
 }
 
-ParmVarDecl *Sema::CheckParameter(DeclContext *DC, SourceLocation StartLoc,
-                                  SourceLocation NameLoc, IdentifierInfo *Name,
-                                  QualType T, TypeSourceInfo *TSInfo,
-                                  StorageClass SC) {
+QualType Sema::adjustParameterTypeForObjCAutoRefCount(QualType T,
+                                                      SourceLocation NameLoc,
+                                                      TypeSourceInfo *TSInfo) {
   // In ARC, infer a lifetime qualifier for appropriate parameter types.
   if (getLangOpts().ObjCAutoRefCount &&
       T.getObjCLifetime() == Qualifiers::OCL_None &&
@@ -13898,6 +13919,16 @@ ParmVarDecl *Sema::CheckParameter(DeclContext *DC, SourceLocation StartLoc,
     }
     T = Context.getLifetimeQualifiedType(T, lifetime);
   }
+
+  return T;
+}
+
+ParmVarDecl *Sema::CheckParameter(DeclContext *DC, SourceLocation StartLoc,
+                                  SourceLocation NameLoc, IdentifierInfo *Name,
+                                  QualType T, TypeSourceInfo *TSInfo,
+                                  StorageClass SC) {
+  // Perform Objective-C ARC adjustments.
+  T = adjustParameterTypeForObjCAutoRefCount(T, NameLoc, TSInfo);
 
   ParmVarDecl *New = ParmVarDecl::Create(Context, DC, StartLoc, NameLoc, Name,
                                          Context.getAdjustedParameterType(T),
@@ -13933,6 +13964,12 @@ ParmVarDecl *Sema::CheckParameter(DeclContext *DC, SourceLocation StartLoc,
       << FixItHint::CreateInsertion(TypeEndLoc, "*");
     T = Context.getObjCObjectPointerType(T);
     New->setType(T);
+  }
+
+  // __ptrauth is forbidden on parameters.
+  if (T.getPointerAuth()) {
+    Diag(NameLoc, diag::err_ptrauth_qualifier_param) << T;
+    New->setInvalidDecl();
   }
 
   // ISO/IEC TR 18037 S6.7.3: "The type of an object with automatic storage
@@ -14842,7 +14879,9 @@ void Sema::ActOnFinishDelayedAttribute(Scope *S, Decl *D,
   // Always attach attributes to the underlying decl.
   if (TemplateDecl *TD = dyn_cast<TemplateDecl>(D))
     D = TD->getTemplatedDecl();
+
   ProcessDeclAttributeList(S, D, Attrs);
+  ProcessAPINotes(D);
 
   if (CXXMethodDecl *Method = dyn_cast_or_null<CXXMethodDecl>(D))
     if (Method->isStatic())
@@ -16682,9 +16721,14 @@ ExprResult Sema::VerifyBitField(SourceLocation FieldLoc,
     if (CStdConstraintViolation || MSBitfieldViolation) {
       unsigned DiagWidth =
           CStdConstraintViolation ? TypeWidth : TypeStorageSize;
-      return Diag(FieldLoc, diag::err_bitfield_width_exceeds_type_width)
-             << (bool)FieldName << FieldName << toString(Value, 10)
-             << !CStdConstraintViolation << DiagWidth;
+      if (FieldName)
+        return Diag(FieldLoc, diag::err_bitfield_width_exceeds_type_width)
+               << FieldName << toString(Value, 10)
+               << !CStdConstraintViolation << DiagWidth;
+
+      return Diag(FieldLoc, diag::err_anon_bitfield_width_exceeds_type_width)
+             << toString(Value, 10) << !CStdConstraintViolation
+             << DiagWidth;
     }
 
     // Warn on types where the user might conceivably expect to get all
@@ -17475,8 +17519,12 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
         if (RT->getDecl()->getArgPassingRestrictions() ==
             RecordDecl::APK_CanNeverPassInRegs)
           Record->setArgPassingRestrictions(RecordDecl::APK_CanNeverPassInRegs);
-      } else if (FT.getQualifiers().getObjCLifetime() == Qualifiers::OCL_Weak)
+      } else if (FT.getQualifiers().getObjCLifetime() == Qualifiers::OCL_Weak) {
         Record->setArgPassingRestrictions(RecordDecl::APK_CanNeverPassInRegs);
+      } else if (PointerAuthQualifier Q = FT.getPointerAuth()) {
+        if (Q.isAddressDiscriminated())
+          Record->setArgPassingRestrictions(RecordDecl::APK_CanNeverPassInRegs);
+      }
     }
 
     if (Record && FD->getType().isVolatileQualified())
@@ -17682,6 +17730,7 @@ void Sema::ActOnFields(Scope *S, SourceLocation RecLoc, Decl *EnclosingDecl,
       CDecl->setIvarRBraceLoc(RBrac);
     }
   }
+  ProcessAPINotes(Record);
 }
 
 /// Determine whether the given integral value is representable within
@@ -17995,6 +18044,8 @@ Decl *Sema::ActOnEnumConstant(Scope *S, Decl *theEnumDecl, Decl *lastEnumConst,
   ProcessDeclAttributeList(S, New, Attrs);
   AddPragmaAttributes(S, New);
 
+  ProcessAPINotes(New);
+
   // Register this decl in the current scope stack.
   New->setAccess(TheEnumDecl->getAccess());
   PushOnScopeChains(New, S);
@@ -18192,6 +18243,7 @@ void Sema::ActOnEnumBody(SourceLocation EnumLoc, SourceRange BraceRange,
   QualType EnumType = Context.getTypeDeclType(Enum);
 
   ProcessDeclAttributeList(S, Enum, Attrs);
+  ProcessAPINotes(Enum);
 
   if (Enum->isDependentType()) {
     for (unsigned i = 0, e = Elements.size(); i != e; ++i) {

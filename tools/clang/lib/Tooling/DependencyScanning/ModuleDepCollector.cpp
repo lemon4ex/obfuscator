@@ -82,6 +82,22 @@ ModuleDeps::getCanonicalCommandLineWithoutModulePaths() const {
   return serializeCompilerInvocation(Invocation);
 }
 
+std::vector<std::string>
+ModuleDeps::getAdditionalArgsWithoutModulePaths() const {
+  std::vector<std::string> Ret{
+    "-remove-preceeding-explicit-module-build-incompatible-options",
+    "-fno-implicit-modules", "-emit-module", "-fmodule-name=" + ID.ModuleName,
+  };
+
+  if (IsSystem)
+    Ret.push_back("-fsystem-module");
+
+  if (Invocation.getLangOpts()->NeededByPCHOrCompilationUsesPCH)
+    Ret.push_back("-fmodule-related-to-pch");
+
+  return Ret;
+}
+
 void dependencies::detail::collectPCMAndModuleMapPaths(
     llvm::ArrayRef<ModuleID> Modules,
     std::function<StringRef(ModuleID)> LookupPCMPath,
@@ -116,7 +132,8 @@ void ModuleDepCollectorPP::FileChanged(SourceLocation Loc,
   // This has to be delayed as the context hash can change at the start of
   // `CompilerInstance::ExecuteAction`.
   if (MDC.ContextHash.empty()) {
-    MDC.ContextHash = Instance.getInvocation().getModuleHash();
+    MDC.ContextHash =
+        Instance.getInvocation().getModuleHash(Instance.getDiagnostics());
     MDC.Consumer.handleContextHash(MDC.ContextHash);
   }
 
@@ -170,15 +187,8 @@ void ModuleDepCollectorPP::EndOfMainFile() {
   if (!Instance.getPreprocessorOpts().ImplicitPCHInclude.empty())
     MDC.FileDeps.push_back(Instance.getPreprocessorOpts().ImplicitPCHInclude);
 
-  for (const Module *M : DirectModularDeps) {
-    // A top-level module might not be actually imported as a module when
-    // -fmodule-name is used to compile a translation unit that imports this
-    // module. In that case it can be skipped. The appropriate header
-    // dependencies will still be reported as expected.
-    if (!M->getASTFile())
-      continue;
+  for (const Module *M : DirectModularDeps)
     handleTopLevelModule(M);
-  }
 
   MDC.Consumer.handleDependencyOutputOpts(*MDC.Opts);
 
@@ -235,7 +245,7 @@ ModuleID ModuleDepCollectorPP::handleTopLevelModule(const Module *M) {
   addDirectPrebuiltModuleDeps(M, MD);
 
   MD.Invocation = MDC.makeInvocationForModuleBuildWithoutPaths(MD);
-  MD.ID.ContextHash = MD.Invocation.getModuleHash();
+  MD.ID.ContextHash = MD.Invocation.getModuleHash(Instance.getDiagnostics());
 
   llvm::DenseSet<const Module *> AddedModules;
   addAllSubmoduleDeps(M, MD, AddedModules);

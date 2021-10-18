@@ -8830,6 +8830,8 @@ struct SpecialMemberDeletionInfo
 
   bool shouldDeleteForVariantObjCPtrMember(FieldDecl *FD, QualType FieldType);
 
+  bool shouldDeleteForVariantPtrAuthMember(FieldDecl *FD, QualType FieldType);
+
   bool visitBase(CXXBaseSpecifier *Base) { return shouldDeleteForBase(Base); }
   bool visitField(FieldDecl *Field) { return shouldDeleteForField(Field); }
 
@@ -8979,11 +8981,35 @@ bool SpecialMemberDeletionInfo::shouldDeleteForVariantObjCPtrMember(
     S.Diag(FD->getLocation(),
            diag::note_deleted_special_member_class_subobject)
         << getEffectiveCSM() << ParentClass << /*IsField*/true
-        << FD << 4 << /*IsDtorCallInCtor*/false << /*IsObjCPtr*/true;
+        << FD << 4 << /*IsDtorCallInCtor*/false << 1;
   }
 
   return true;
 }
+
+bool SpecialMemberDeletionInfo::shouldDeleteForVariantPtrAuthMember(
+    FieldDecl *FD, QualType FieldType) {
+  // Copy/move constructors/assignment operators are deleted if the field has an
+  // address-discriminated ptrauth qualifier.
+  PointerAuthQualifier Q = FieldType.getPointerAuth();
+
+  if (!Q || !Q.isAddressDiscriminated())
+    return false;
+
+  if (CSM == Sema::CXXDefaultConstructor || CSM == Sema::CXXDestructor)
+    return false;
+
+  if (Diagnose) {
+    auto *ParentClass = cast<CXXRecordDecl>(FD->getParent());
+    S.Diag(FD->getLocation(),
+           diag::note_deleted_special_member_class_subobject)
+        << getEffectiveCSM() << ParentClass << /*IsField*/true
+        << FD << 4 << /*IsDtorCallInCtor*/false << 2;
+  }
+
+  return true;
+}
+
 
 /// Check whether we should delete a special member function due to the class
 /// having a particular direct or virtual base class.
@@ -9021,6 +9047,9 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
   CXXRecordDecl *FieldRecord = FieldType->getAsCXXRecordDecl();
 
   if (inUnion() && shouldDeleteForVariantObjCPtrMember(FD, FieldType))
+    return true;
+
+  if (inUnion() && shouldDeleteForVariantPtrAuthMember(FD, FieldType))
     return true;
 
   if (CSM == Sema::CXXDefaultConstructor) {
@@ -9085,6 +9114,9 @@ bool SpecialMemberDeletionInfo::shouldDeleteForField(FieldDecl *FD) {
         QualType UnionFieldType = S.Context.getBaseElementType(UI->getType());
 
         if (shouldDeleteForVariantObjCPtrMember(&*UI, UnionFieldType))
+          return true;
+
+        if (shouldDeleteForVariantPtrAuthMember(&*UI, UnionFieldType))
           return true;
 
         if (!UnionFieldType.isConstQualified())
@@ -9910,6 +9942,12 @@ void Sema::checkIllFormedTrivialABIStruct(CXXRecordDecl &RD) {
     QualType FT = FD->getType();
     if (FT.getObjCLifetime() == Qualifiers::OCL_Weak) {
       PrintDiagAndRemoveAttr(4);
+      return;
+    }
+
+    // Ill-formed if the field is an address-discriminated pointer.
+    if (FT.hasAddressDiscriminatedPointerAuth()) {
+      PrintDiagAndRemoveAttr(6);
       return;
     }
 
@@ -10991,6 +11029,7 @@ Decl *Sema::ActOnStartNamespaceDef(
 
   ProcessDeclAttributeList(DeclRegionScope, Namespc, AttrList);
   AddPragmaAttributes(DeclRegionScope, Namespc);
+  ProcessAPINotes(Namespc);
 
   // FIXME: Should we be merging attributes?
   if (const VisibilityAttr *Attr = Namespc->getAttr<VisibilityAttr>())
@@ -11521,6 +11560,7 @@ Decl *Sema::ActOnUsingDirective(Scope *S, SourceLocation UsingLoc,
 
   if (UDir)
     ProcessDeclAttributeList(S, UDir, AttrList);
+  ProcessAPINotes(UDir);
 
   return UDir;
 }
@@ -12472,8 +12512,6 @@ bool Sema::CheckUsingDeclRedeclaration(SourceLocation UsingLoc,
     return false;
   }
 
-  const NestedNameSpecifier *CNNS =
-      Context.getCanonicalNestedNameSpecifier(Qual);
   for (LookupResult::iterator I = Prev.begin(), E = Prev.end(); I != E; ++I) {
     NamedDecl *D = *I;
 
@@ -12499,7 +12537,8 @@ bool Sema::CheckUsingDeclRedeclaration(SourceLocation UsingLoc,
     // using decls differ if they name different scopes (but note that
     // template instantiation can cause this check to trigger when it
     // didn't before instantiation).
-    if (CNNS != Context.getCanonicalNestedNameSpecifier(DQual))
+    if (Context.getCanonicalNestedNameSpecifier(Qual) !=
+        Context.getCanonicalNestedNameSpecifier(DQual))
       continue;
 
     Diag(NameLoc, diag::err_using_decl_redeclaration) << SS.getRange();
@@ -12801,6 +12840,7 @@ Decl *Sema::ActOnAliasDeclaration(Scope *S, AccessSpecifier AS,
 
   ProcessDeclAttributeList(S, NewTD, AttrList);
   AddPragmaAttributes(S, NewTD);
+  ProcessAPINotes(NewTD);
 
   CheckTypedefForVariablyModifiedType(S, NewTD);
   Invalid |= NewTD->isInvalidDecl();
@@ -15262,17 +15302,8 @@ Sema::BuildCXXConstructExpr(SourceLocation ConstructLoc, QualType DeclInitType,
   //       can be omitted by constructing the temporary object
   //       directly into the target of the omitted copy/move
   if (ConstructKind == CXXConstructExpr::CK_Complete && Constructor &&
-      // FIXME: Converting constructors should also be accepted.
-      // But to fix this, the logic that digs down into a CXXConstructExpr
-      // to find the source object needs to handle it.
-      // Right now it assumes the source object is passed directly as the
-      // first argument.
       Constructor->isCopyOrMoveConstructor() && hasOneRealArgument(ExprArgs)) {
     Expr *SubExpr = ExprArgs[0];
-    // FIXME: Per above, this is also incorrect if we want to accept
-    //        converting constructors, as isTemporaryObject will
-    //        reject temporaries with different type from the
-    //        CXXRecord itself.
     Elidable = SubExpr->isTemporaryObject(
         Context, cast<CXXRecordDecl>(FoundDecl->getDeclContext()));
   }

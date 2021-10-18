@@ -68,6 +68,7 @@ LLVMContext::LLVMContext() : pImpl(new LLVMContextImpl(*this)) {
          "cfguardtarget operand bundle id drifted!");
   (void)CFGuardTargetEntry;
 
+
   auto *PreallocatedEntry = pImpl->getOrInsertBundleTag("preallocated");
   assert(PreallocatedEntry->second == LLVMContext::OB_preallocated &&
          "preallocated operand bundle id drifted!");
@@ -77,6 +78,11 @@ LLVMContext::LLVMContext() : pImpl(new LLVMContextImpl(*this)) {
   assert(GCLiveEntry->second == LLVMContext::OB_gc_live &&
          "gc-transition operand bundle id drifted!");
   (void)GCLiveEntry;
+
+  auto *PtrauthEntry = pImpl->getOrInsertBundleTag("ptrauth");
+  assert(PtrauthEntry->second == LLVMContext::OB_ptrauth &&
+         "ptrauth operand bundle id drifted!");
+  (void)PtrauthEntry;
 
   auto *ClangAttachedCall =
       pImpl->getOrInsertBundleTag("clang.arc.attachedcall");
@@ -248,7 +254,7 @@ void LLVMContext::diagnose(const DiagnosticInfo &DI) {
     exit(1);
 }
 
-void LLVMContext::emitError(uint64_t LocCookie, const Twine &ErrorStr) {
+void LLVMContext::emitError(unsigned LocCookie, const Twine &ErrorStr) {
   diagnose(DiagnosticInfoInlineAsm(LocCookie, ErrorStr));
 }
 
@@ -346,8 +352,4 @@ const DiagnosticHandler *LLVMContext::getDiagHandlerPtr() const {
 
 std::unique_ptr<DiagnosticHandler> LLVMContext::getDiagnosticHandler() {
   return std::move(pImpl->DiagHandler);
-}
-
-bool LLVMContext::supportsTypedPointers() const {
-  return !pImpl->ForceOpaquePointers;
 }
